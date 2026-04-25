@@ -7,7 +7,7 @@ import sqlite3
 import os
 from contextlib import contextmanager
 
-DB_PATH = os.environ.get("DB_PATH", "erp.db")
+DB_PATH = os.environ.get("DB_PATH", "/data/erp.db")
 
 
 def get_connection():
