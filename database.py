@@ -11,6 +11,8 @@ DB_PATH = os.environ.get("DB_PATH", "/data/erp.db")
 
 
 def get_connection():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)  # ← agregar esta línea
+    conn = sqlite3.connect(DB_PATH)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
