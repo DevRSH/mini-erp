@@ -226,6 +226,12 @@ def _producto_full(row):
     d.update(_margen(d["precio"], d["costo"], d.get("costo_envio", 0)))
     return d
 
+def _to_iso_dt(value):
+    if not value:
+        return value
+    # SQLite datetime('now') => "YYYY-MM-DD HH:MM:SS"
+    return value.replace(" ", "T", 1) if " " in value else value
+
 
 # ────────────────────────────────────────────
 # SPRINT 1 — INVENTARIO
@@ -381,6 +387,11 @@ def crear_variante(id: int, datos: VarianteCrear):
              datos.attr2_nombre, datos.attr2_valor,
              datos.stock, datos.stock_minimo, datos.codigo_barras)
         )
+        total = conn.execute(
+            "SELECT COALESCE(SUM(stock),0) as t FROM variantes WHERE producto_id=? AND activo=1",
+            (id,)
+        ).fetchone()["t"]
+        conn.execute("UPDATE productos SET stock=? WHERE id=?", (total, id))
         row = conn.execute("SELECT * FROM variantes WHERE id=?", (cursor.lastrowid,)).fetchone()
         return dict(row)
 
@@ -414,7 +425,22 @@ def desactivar_variante(id: int):
         if not v:
             raise HTTPException(404, f"Variante {id} no encontrada")
         conn.execute("UPDATE variantes SET activo=0 WHERE id=?", (id,))
-        return {"mensaje": "Variante desactivada"}
+        restantes = conn.execute(
+            "SELECT COUNT(*) AS c FROM variantes WHERE producto_id=? AND activo=1",
+            (v["producto_id"],)
+        ).fetchone()["c"]
+        if restantes == 0:
+            conn.execute(
+                "UPDATE productos SET tiene_variantes=0, stock=0 WHERE id=?",
+                (v["producto_id"],)
+            )
+        else:
+            total = conn.execute(
+                "SELECT COALESCE(SUM(stock),0) AS t FROM variantes WHERE producto_id=? AND activo=1",
+                (v["producto_id"],)
+            ).fetchone()["t"]
+            conn.execute("UPDATE productos SET stock=? WHERE id=?", (total, v["producto_id"]))
+        return {"mensaje": "Variante desactivada", "variantes_activas": restantes}
 
 
 @app.post("/api/variantes/{id}/ajuste")
@@ -570,7 +596,9 @@ def historial_ventas(limite: int = 50):
                    WHERE d.venta_id=?""",
                 (v["id"],)
             ).fetchall()
-            resultado.append({**dict(v), "items": [dict(d) for d in detalles]})
+            venta = dict(v)
+            venta["created_at"] = _to_iso_dt(venta.get("created_at"))
+            resultado.append({**venta, "items": [dict(d) for d in detalles]})
         return resultado
 
 
@@ -582,16 +610,16 @@ def historial_ventas(limite: int = 50):
 def stock_bajo():
     with get_db() as conn:
         productos = conn.execute(
-            """SELECT id, nombre, stock, stock_minimo, categoria, tiene_variantes,
-                      (stock_minimo - stock) AS unidades_faltantes
+            """SELECT id, nombre, stock, stock_minimo, categoria, tiene_variantes
                FROM productos
-               WHERE activo=1 AND stock <= stock_minimo
-               ORDER BY unidades_faltantes DESC"""
+               WHERE activo=1
+               ORDER BY nombre"""
         ).fetchall()
 
         resultado = []
         for p in productos:
             item = dict(p)
+            incluir = p["stock"] <= p["stock_minimo"]
             if p["tiene_variantes"]:
                 vars_bajas = conn.execute(
                     """SELECT attr1_nombre, attr1_valor, attr2_nombre, attr2_valor,
@@ -601,12 +629,26 @@ def stock_bajo():
                     (p["id"],)
                 ).fetchall()
                 item["variantes_bajas"] = [dict(v) for v in vars_bajas]
-            resultado.append(item)
+                if item["variantes_bajas"]:
+                    incluir = True
+            if incluir:
+                item["unidades_faltantes"] = max(0, p["stock_minimo"] - p["stock"])
+                resultado.append(item)
+        resultado.sort(key=lambda x: x["unidades_faltantes"], reverse=True)
         return resultado
 
 
 @app.get("/api/reportes/mas-vendidos")
-def mas_vendidos(limite: int = 10):
+def mas_vendidos(limite: int = 10, periodo: str = "todo"):
+    filtros = {
+        "todo": "1=1",
+        "hoy": "date(v.created_at) = date('now','localtime')",
+        "semana": "v.created_at >= date('now','-7 days','localtime')",
+        "mes": "strftime('%Y-%m', v.created_at) = strftime('%Y-%m', 'now','localtime')",
+    }
+    if periodo not in filtros:
+        raise HTTPException(400, "periodo debe ser: todo, hoy, semana o mes")
+
     with get_db() as conn:
         rows = conn.execute(
             """SELECT p.id, p.nombre, p.categoria,
@@ -614,6 +656,8 @@ def mas_vendidos(limite: int = 10):
                       SUM(d.subtotal) AS ingresos_totales
                FROM detalle_venta d
                JOIN productos p ON d.producto_id = p.id
+               JOIN ventas v ON d.venta_id = v.id
+               WHERE """ + filtros[periodo] + """
                GROUP BY p.id
                ORDER BY total_vendido DESC
                LIMIT ?""",
@@ -702,6 +746,9 @@ def registrar_compra(compra: CompraCrear):
             ).fetchone()
             if not p:
                 raise HTTPException(404, f"Producto ID {item.producto_id} no existe")
+
+            if p["tiene_variantes"] and not item.variante_id:
+                raise HTTPException(400, f"'{p['nombre']}' tiene variantes. Debes seleccionar una.")
 
             if item.variante_id:
                 v = conn.execute(
@@ -793,7 +840,9 @@ def historial_compras(limite: int = 50):
                    WHERE dc.compra_id=?""",
                 (c["id"],)
             ).fetchall()
-            resultado.append({**dict(c), "items": [dict(d) for d in detalles]})
+            compra = dict(c)
+            compra["created_at"] = _to_iso_dt(compra.get("created_at"))
+            resultado.append({**compra, "items": [dict(d) for d in detalles]})
         return resultado
 
 
@@ -811,7 +860,9 @@ def detalle_compra(id: int):
                WHERE dc.compra_id=?""",
             (id,)
         ).fetchall()
-        return {**dict(c), "items": [dict(d) for d in detalles]}
+        compra = dict(c)
+        compra["created_at"] = _to_iso_dt(compra.get("created_at"))
+        return {**compra, "items": [dict(d) for d in detalles]}
 
 
 # ────────────────────────────────────────────
