@@ -6,7 +6,7 @@ Sprint 4: Variantes, código proveedor, costo envío, margen, escáner
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, Response, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 from database import init_db, init_compras, get_db
 import os
@@ -43,7 +43,8 @@ class ProductoCrear(BaseModel):
     codigo_proveedor: str = Field("", max_length=80)
     tiene_variantes: bool = False
 
-    @validator("nombre")
+    @field_validator("nombre")
+    @classmethod
     def nombre_no_vacio(cls, v):
         if not v.strip():
             raise ValueError("El nombre no puede estar vacío")
@@ -74,9 +75,10 @@ class VarianteCrear(BaseModel):
     stock_minimo: int = Field(2, ge=0)
     codigo_barras: str = Field("", max_length=80)
 
-    @validator("attr2_valor", always=True)
-    def validar_attr2(cls, v, values):
-        nombre = values.get("attr2_nombre")
+    @field_validator("attr2_valor", mode="after")
+    @classmethod
+    def validar_attr2(cls, v, info):
+        nombre = info.data.get("attr2_nombre")
         if nombre and not v:
             raise ValueError("Si hay nombre de atributo 2, debe tener valor")
         if not nombre and v:
@@ -103,7 +105,7 @@ class ItemVenta(BaseModel):
 
 
 class VentaCrear(BaseModel):
-    items: List[ItemVenta] = Field(..., min_items=1)
+    items: List[ItemVenta] = Field(..., min_length=1)
     metodo_pago: str = Field("efectivo", pattern="^(efectivo|transferencia|tarjeta)$")
 
 
@@ -647,7 +649,7 @@ class CompraCrear(BaseModel):
     proveedor: str = Field("Sin nombre", max_length=100)
     notas: str = Field("", max_length=300)
     costo_envio: float = Field(0, ge=0)
-    items: List[ItemCompra] = Field(..., min_items=1)
+    items: List[ItemCompra] = Field(..., min_length=1)
     actualizar_costo: bool = Field(True, description="Si true, actualiza el costo del producto con el de esta compra")
 
 
