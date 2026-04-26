@@ -23,8 +23,6 @@ if not cors_origins:
     cors_origins = ["http://localhost:8000"]
 app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_methods=["*"], allow_headers=["*"])
 
-LIST_FIELD_CONSTRAINT = {"min_length": 1} if PYDANTIC_V2 else {"min_items": 1}
-
 @app.on_event("startup")
 def startup():
     init_db()
