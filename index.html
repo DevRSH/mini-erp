@@ -2605,16 +2605,33 @@
     // ═══════════════════════════════════════════
     let itemsCompra = [];  // [{producto_id, variante_id, nombre, etiqueta, cantidad, costo_unitario}]
 
-    function openModalCompra() {
+    async function asegurarProductosCargados() {
+      if (todosProductos.length) return;
+      todosProductos = await api('GET', '/api/productos');
+    }
+
+    async function openModalCompra() {
       itemsCompra = [];
       $('compra-proveedor').value = '';
       $('compra-envio').value = '0';
       $('compra-notas').value = '';
       $('compra-actualizar-costo').checked = true;
+
+      try {
+        await asegurarProductosCargados();
+      } catch (e) {
+        toast('Error cargando productos: ' + e.message, 'error');
+        return;
+      }
+
       renderItemsCompra();
       actualizarTotalCompra();
       actualizarDatalistProveedores();
       $('modal-compra').classList.add('open');
+
+      if (!todosProductos.length) {
+        toast('No hay productos activos para seleccionar en compras', 'info');
+      }
     }
 
     async function actualizarDatalistProveedores() {
@@ -2626,6 +2643,10 @@
     }
 
     function agregarItemCompra() {
+      if (!todosProductos.length) {
+        toast('No hay productos disponibles. Crea o activa productos primero.', 'error');
+        return;
+      }
       itemsCompra.push({ producto_id: null, variante_id: null, nombre: '', etiqueta: '', cantidad: 1, costo_unitario: 0 });
       renderItemsCompra();
     }
