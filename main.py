@@ -6,13 +6,7 @@ Sprint 4: Variantes, código proveedor, costo envío, margen, escáner
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, Response, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-try:
-    from pydantic import field_validator, model_validator
-    PYDANTIC_V2 = True
-except ImportError:
-    from pydantic import root_validator, validator
-    PYDANTIC_V2 = False
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 from database import init_db, init_compras, get_db
 import os
@@ -51,19 +45,12 @@ class ProductoCrear(BaseModel):
     codigo_proveedor: str = Field("", max_length=80)
     tiene_variantes: bool = False
 
-    if PYDANTIC_V2:
-        @field_validator("nombre")
-        @classmethod
-        def nombre_no_vacio(cls, v):
-            if not v.strip():
-                raise ValueError("El nombre no puede estar vacío")
-            return v.strip()
-    else:
-        @validator("nombre")
-        def nombre_no_vacio(cls, v):
-            if not v.strip():
-                raise ValueError("El nombre no puede estar vacío")
-            return v.strip()
+    @field_validator("nombre")
+    @classmethod
+    def nombre_no_vacio(cls, v):
+        if not v.strip():
+            raise ValueError("El nombre no puede estar vacío")
+        return v.strip()
 
 
 class ProductoEditar(BaseModel):
@@ -90,24 +77,15 @@ class VarianteCrear(BaseModel):
     stock_minimo: int = Field(2, ge=0)
     codigo_barras: str = Field("", max_length=80)
 
-    if PYDANTIC_V2:
-        @model_validator(mode="after")
-        def validar_attr2(self):
-            if self.attr2_nombre and not self.attr2_valor:
-                raise ValueError("Si hay nombre de atributo 2, debe tener valor")
-            if not self.attr2_nombre and self.attr2_valor:
-                raise ValueError("Si hay valor de atributo 2, debe tener nombre")
-            return self
-    else:
-        @root_validator
-        def validar_attr2(cls, values):
-            attr2_nombre = values.get("attr2_nombre")
-            attr2_valor = values.get("attr2_valor")
-            if attr2_nombre and not attr2_valor:
-                raise ValueError("Si hay nombre de atributo 2, debe tener valor")
-            if not attr2_nombre and attr2_valor:
-                raise ValueError("Si hay valor de atributo 2, debe tener nombre")
-            return values
+    @field_validator("attr2_valor", mode="after")
+    @classmethod
+    def validar_attr2(cls, v, info):
+        nombre = info.data.get("attr2_nombre")
+        if nombre and not v:
+            raise ValueError("Si hay nombre de atributo 2, debe tener valor")
+        if not nombre and v:
+            raise ValueError("Si hay valor de atributo 2, debe tener nombre")
+        return v
 
 
 class VarianteEditar(BaseModel):
@@ -129,7 +107,7 @@ class ItemVenta(BaseModel):
 
 
 class VentaCrear(BaseModel):
-    items: List[ItemVenta] = Field(..., **LIST_FIELD_CONSTRAINT)
+    items: List[ItemVenta] = Field(..., min_length=1)
     metodo_pago: str = Field("efectivo", pattern="^(efectivo|transferencia|tarjeta)$")
 
 
@@ -673,7 +651,7 @@ class CompraCrear(BaseModel):
     proveedor: str = Field("Sin nombre", max_length=100)
     notas: str = Field("", max_length=300)
     costo_envio: float = Field(0, ge=0)
-    items: List[ItemCompra] = Field(..., **LIST_FIELD_CONSTRAINT)
+    items: List[ItemCompra] = Field(..., min_length=1)
     actualizar_costo: bool = Field(True, description="Si true, actualiza el costo del producto con el de esta compra")
 
 
