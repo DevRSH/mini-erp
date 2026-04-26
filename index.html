@@ -358,6 +358,7 @@ input:checked + .toggle-slider:before{transform:translateX(22px)}
   <button class="nav-btn active" onclick="navTo('dashboard')" id="nav-dashboard"><span class="icon">🏠</span>Inicio</button>
   <button class="nav-btn" onclick="navTo('inventario')" id="nav-inventario"><span class="icon">📦</span>Inventario</button>
   <button class="nav-btn" onclick="navTo('ventas')" id="nav-ventas"><span class="icon">💰</span>Vender</button>
+  <button class="nav-btn" onclick="navTo('historial')" id="nav-historial"><span class="icon">📋</span>Historial</button>
   <button class="nav-btn" onclick="navTo('compras')" id="nav-compras"><span class="icon">🚚</span>Compras</button>
   <button class="nav-btn" onclick="navTo('reportes')" id="nav-reportes"><span class="icon">📊</span>Reportes</button>
 </nav>
@@ -656,12 +657,19 @@ let carrito = {};          // key: "prod_ID" o "var_ID"
 let scannerActivo = false;
 let html5QrCode = null;
 let pendienteProductoVariante = null; // producto esperando elección de variante
+let periodoReportesActual = 'hoy';
 
 // ═══════════════════════════════════════════
 // UTILIDADES
 // ═══════════════════════════════════════════
 const $ = id => document.getElementById(id);
 const fmt = n => (n == null || isNaN(n)) ? '—' : '$' + Number(n).toLocaleString('es-CL');
+
+function parseFechaApp(fechaRaw) {
+  if (!fechaRaw || typeof fechaRaw !== 'string') return new Date();
+  const normalizada = fechaRaw.includes('T') ? fechaRaw : fechaRaw.replace(' ', 'T');
+  return new Date(normalizada);
+}
 
 function toast(msg, tipo = 'success') {
   const c = $('toast-container');
@@ -710,7 +718,7 @@ function navTo(pag) {
     ventas: cargarProductosVenta,
     compras: cargarCompras,
     historial: cargarHistorial,
-    reportes: () => cargarReportes('hoy')
+    reportes: () => cargarReportes(periodoReportesActual)
   };
   if (loaders[pag]) loaders[pag]();
 }
@@ -722,7 +730,7 @@ async function cargarDashboard() {
   try {
     const [res, top, sb] = await Promise.all([
       api('GET', '/api/reportes/resumen?periodo=hoy'),
-      api('GET', '/api/reportes/mas-vendidos?limite=5'),
+      api('GET', '/api/reportes/mas-vendidos?limite=5&periodo=mes'),
       api('GET', '/api/reportes/stock-bajo')
     ]);
     $('dash-ventas').textContent   = res.ventas.total_ventas;
@@ -1056,21 +1064,35 @@ async function onCodigoEscaneadoVenta(codigo) {
       const v = res.datos;
       const carritoKey = `var_${v.id}`;
       if (!carrito[carritoKey]) {
+        if (v.stock <= 0) { toast('Sin stock disponible para esa variante.','error'); return; }
         carrito[carritoKey] = {
           producto_id: v.producto_id, variante_id: v.id,
           nombre: v.producto_nombre,
           etiqueta_variante: v.attr2_valor ? `${v.attr1_valor} / ${v.attr2_valor}` : v.attr1_valor,
           precio: v.precio, stock: v.stock, cantidad: 1
         };
-      } else { carrito[carritoKey].cantidad++; }
+      } else {
+        if (carrito[carritoKey].cantidad >= carrito[carritoKey].stock) {
+          toast(`Solo ${carrito[carritoKey].stock} disponibles`,'error');
+          return;
+        }
+        carrito[carritoKey].cantidad++;
+      }
       resultDiv.textContent = `✅ Agregado: ${v.producto_nombre} — ${carrito[carritoKey].etiqueta_variante}`;
     } else {
       const p = res.datos;
       if (p.tiene_variantes) { toast('Este producto tiene variantes. Selecciónalo manualmente.','info'); return; }
       const carritoKey = `prod_${p.id}`;
       if (!carrito[carritoKey]) {
+        if (p.stock <= 0) { toast('Sin stock disponible para ese producto.','error'); return; }
         carrito[carritoKey] = { producto_id: p.id, variante_id: null, nombre: p.nombre, etiqueta_variante: null, precio: p.precio, stock: p.stock, cantidad: 1 };
-      } else { carrito[carritoKey].cantidad++; }
+      } else {
+        if (carrito[carritoKey].cantidad >= carrito[carritoKey].stock) {
+          toast(`Solo ${carrito[carritoKey].stock} disponibles`,'error');
+          return;
+        }
+        carrito[carritoKey].cantidad++;
+      }
       resultDiv.textContent = `✅ Agregado: ${p.nombre}`;
     }
     resultDiv.style.display = 'block';
@@ -1252,7 +1274,7 @@ async function cargarHistorial() {
     if (!ventas.length) { $('lista-ventas').innerHTML='<div class="empty-state"><div class="empty-icon">📋</div><p>Sin ventas aún.</p></div>'; return; }
     const mic = {efectivo:'💵', transferencia:'📱', tarjeta:'💳'};
     $('lista-ventas').innerHTML = ventas.map(v => {
-      const fecha = new Date(v.created_at).toLocaleString('es-CL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+      const fecha = parseFechaApp(v.created_at).toLocaleString('es-CL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
       const itemsTxt = v.items.map(i => {
         const etiq = i.attr2_valor ? ` (${i.attr1_valor}/${i.attr2_valor})` : i.attr1_valor ? ` (${i.attr1_valor})` : '';
         return `${i.nombre}${etiq} ×${i.cantidad}`;
@@ -1278,6 +1300,7 @@ async function cargarHistorial() {
 function cambiarPeriodo(periodo, btn) {
   document.querySelectorAll('.period-tab').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
+  periodoReportesActual = periodo;
   cargarReportes(periodo);
 }
 
@@ -1286,7 +1309,7 @@ async function cargarReportes(periodo) {
     const [res, sb, mv] = await Promise.all([
       api('GET',`/api/reportes/resumen?periodo=${periodo}`),
       api('GET','/api/reportes/stock-bajo'),
-      api('GET','/api/reportes/mas-vendidos?limite=8'),
+      api('GET',`/api/reportes/mas-vendidos?limite=8&periodo=${periodo}`),
     ]);
     $('r-ventas').textContent   = res.ventas.total_ventas;
     $('r-ingresos').textContent = fmt(res.ventas.ingresos);
@@ -1504,6 +1527,11 @@ async function confirmarCompra() {
   for (const [i, item] of itemsCompra.entries()) {
     if (!item.producto_id) { toast(`Selecciona el producto en ítem ${i+1}`,'error'); return; }
     if (!item.cantidad || item.cantidad < 1) { toast(`Cantidad inválida en ítem ${i+1}`,'error'); return; }
+    const producto = todosProductos.find(p => p.id === item.producto_id);
+    if (producto?.tiene_variantes && !item.variante_id) {
+      toast(`Selecciona una variante en ítem ${i+1}`,'error');
+      return;
+    }
   }
   try {
     const res = await api('POST','/api/compras',{
@@ -1534,7 +1562,7 @@ async function cargarCompras() {
       return;
     }
     $('lista-compras').innerHTML = compras.map(c => {
-      const fecha = new Date(c.created_at).toLocaleString('es-CL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+      const fecha = parseFechaApp(c.created_at).toLocaleString('es-CL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
       const itemsTxt = c.items.map(i => {
         const etiq = i.attr2_valor ? ` (${i.attr1_valor}/${i.attr2_valor})` : i.attr1_valor ? ` (${i.attr1_valor})` : '';
         return `${i.nombre}${etiq} ×${i.cantidad}`;

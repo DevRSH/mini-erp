@@ -7,12 +7,23 @@ import sqlite3
 import os
 from contextlib import contextmanager
 
-DB_PATH = os.environ.get("DB_PATH", "/data/erp.db")
+
+def _default_db_path():
+    env_path = os.environ.get("DB_PATH")
+    if env_path:
+        return env_path
+
+    data_dir = "/data"
+    if os.path.isdir(data_dir) and os.access(data_dir, os.W_OK):
+        return os.path.join(data_dir, "erp.db")
+    return os.path.join(os.path.dirname(__file__), "data", "erp.db")
+
+
+DB_PATH = _default_db_path()
 
 
 def get_connection():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)  # ← agregar esta línea
-    conn = sqlite3.connect(DB_PATH)
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")

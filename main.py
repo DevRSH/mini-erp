@@ -13,7 +13,15 @@ import os
 
 app = FastAPI(title="Mini ERP", version="2.0.0")
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+APP_ENV = os.environ.get("APP_ENV", "development").lower()
+cors_origins_env = os.environ.get("CORS_ORIGINS", "")
+if APP_ENV == "development" and not cors_origins_env:
+    cors_origins = ["*"]
+else:
+    cors_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
+if not cors_origins:
+    cors_origins = ["http://localhost:8000"]
+app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_methods=["*"], allow_headers=["*"])
 
 @app.on_event("startup")
 def startup():
@@ -114,6 +122,46 @@ def _producto_full(row):
     d = dict(row)
     d.update(_margen(d["precio"], d["costo"], d.get("costo_envio", 0)))
     return d
+
+
+def _to_iso_datetime(value):
+    if isinstance(value, str) and len(value) >= 19 and "T" not in value and " " in value:
+        return value.replace(" ", "T", 1)
+    return value
+
+
+def _serialize_row(row):
+    data = dict(row)
+    if "created_at" in data:
+        data["created_at"] = _to_iso_datetime(data["created_at"])
+    return data
+
+
+def _resincronizar_stock_producto(conn, producto_id: int, desactivar_si_sin_variantes: bool = False):
+    resumen = conn.execute(
+        """SELECT COALESCE(SUM(stock), 0) AS total_stock,
+                  COUNT(*) AS variantes_activas
+           FROM variantes
+           WHERE producto_id=? AND activo=1""",
+        (producto_id,)
+    ).fetchone()
+    total_stock = int(resumen["total_stock"])
+    variantes_activas = int(resumen["variantes_activas"])
+
+    if variantes_activas > 0:
+        conn.execute(
+            "UPDATE productos SET stock=?, tiene_variantes=1 WHERE id=?",
+            (total_stock, producto_id)
+        )
+    elif desactivar_si_sin_variantes:
+        conn.execute(
+            "UPDATE productos SET stock=0, tiene_variantes=0 WHERE id=?",
+            (producto_id,)
+        )
+    else:
+        conn.execute("UPDATE productos SET stock=0 WHERE id=?", (producto_id,))
+
+    return {"stock_total": total_stock, "variantes_activas": variantes_activas}
 
 
 # ────────────────────────────────────────────
@@ -270,8 +318,9 @@ def crear_variante(id: int, datos: VarianteCrear):
              datos.attr2_nombre, datos.attr2_valor,
              datos.stock, datos.stock_minimo, datos.codigo_barras)
         )
+        _resincronizar_stock_producto(conn, id)
         row = conn.execute("SELECT * FROM variantes WHERE id=?", (cursor.lastrowid,)).fetchone()
-        return dict(row)
+        return _serialize_row(row)
 
 
 @app.put("/api/variantes/{id}")
@@ -293,7 +342,7 @@ def editar_variante(id: int, datos: VarianteEditar):
         set_clause = ", ".join(f"{k}=?" for k in campos)
         conn.execute(f"UPDATE variantes SET {set_clause} WHERE id=?", [*campos.values(), id])
         row = conn.execute("SELECT * FROM variantes WHERE id=?", (id,)).fetchone()
-        return dict(row)
+        return _serialize_row(row)
 
 
 @app.delete("/api/variantes/{id}")
@@ -303,7 +352,13 @@ def desactivar_variante(id: int):
         if not v:
             raise HTTPException(404, f"Variante {id} no encontrada")
         conn.execute("UPDATE variantes SET activo=0 WHERE id=?", (id,))
-        return {"mensaje": "Variante desactivada"}
+        estado = _resincronizar_stock_producto(conn, v["producto_id"], desactivar_si_sin_variantes=True)
+        return {
+            "mensaje": "Variante desactivada",
+            "producto_id": v["producto_id"],
+            "stock_total": estado["stock_total"],
+            "variantes_activas": estado["variantes_activas"],
+        }
 
 
 @app.post("/api/variantes/{id}/ajuste")
@@ -318,13 +373,7 @@ def ajustar_stock_variante(id: int, ajuste: AjusteVariante):
             raise HTTPException(400, f"Stock insuficiente. Actual: {v['stock']}")
 
         conn.execute("UPDATE variantes SET stock=? WHERE id=?", (nuevo, id))
-
-        # Sincronizar stock total del producto padre (suma de variantes)
-        total = conn.execute(
-            "SELECT COALESCE(SUM(stock),0) as t FROM variantes WHERE producto_id=? AND activo=1",
-            (v["producto_id"],)
-        ).fetchone()["t"]
-        conn.execute("UPDATE productos SET stock=? WHERE id=?", (total, v["producto_id"]))
+        _resincronizar_stock_producto(conn, v["producto_id"])
 
         return {"variante_id": id, "stock_anterior": v["stock"],
                 "ajuste": ajuste.cantidad, "stock_nuevo": nuevo}
@@ -425,13 +474,7 @@ def registrar_venta(venta: VentaCrear):
                     "UPDATE variantes SET stock = stock - ? WHERE id=?",
                     (item["cantidad"], item["variante_id"])
                 )
-                # Resincronizar stock total del producto
-                total_var = conn.execute(
-                    "SELECT COALESCE(SUM(stock),0) as t FROM variantes WHERE producto_id=? AND activo=1",
-                    (item["producto_id"],)
-                ).fetchone()["t"]
-                conn.execute("UPDATE productos SET stock=? WHERE id=?",
-                             (total_var, item["producto_id"]))
+                _resincronizar_stock_producto(conn, item["producto_id"])
             else:
                 conn.execute(
                     "UPDATE productos SET stock = stock - ? WHERE id=?",
@@ -459,7 +502,10 @@ def historial_ventas(limite: int = 50):
                    WHERE d.venta_id=?""",
                 (v["id"],)
             ).fetchall()
-            resultado.append({**dict(v), "items": [dict(d) for d in detalles]})
+            resultado.append({
+                **_serialize_row(v),
+                "items": [_serialize_row(d) for d in detalles],
+            })
         return resultado
 
 
@@ -474,13 +520,14 @@ def stock_bajo():
             """SELECT id, nombre, stock, stock_minimo, categoria, tiene_variantes,
                       (stock_minimo - stock) AS unidades_faltantes
                FROM productos
-               WHERE activo=1 AND stock <= stock_minimo
-               ORDER BY unidades_faltantes DESC"""
+               WHERE activo=1
+               ORDER BY nombre"""
         ).fetchall()
 
         resultado = []
         for p in productos:
             item = dict(p)
+            vars_bajas = []
             if p["tiene_variantes"]:
                 vars_bajas = conn.execute(
                     """SELECT attr1_nombre, attr1_valor, attr2_nombre, attr2_valor,
@@ -489,13 +536,30 @@ def stock_bajo():
                        WHERE producto_id=? AND activo=1 AND stock <= stock_minimo""",
                     (p["id"],)
                 ).fetchall()
+            if p["stock"] <= p["stock_minimo"] or vars_bajas:
                 item["variantes_bajas"] = [dict(v) for v in vars_bajas]
-            resultado.append(item)
+                resultado.append(item)
+
+        resultado.sort(
+            key=lambda x: (
+                x["stock_minimo"] - x["stock"],
+                len(x.get("variantes_bajas", [])),
+            ),
+            reverse=True
+        )
         return resultado
 
 
 @app.get("/api/reportes/mas-vendidos")
-def mas_vendidos(limite: int = 10):
+def mas_vendidos(limite: int = 10, periodo: str = "mes"):
+    filtros = {
+        "hoy":    "date(v.created_at) = date('now','localtime')",
+        "semana": "v.created_at >= date('now','-7 days','localtime')",
+        "mes":    "strftime('%Y-%m', v.created_at) = strftime('%Y-%m', 'now','localtime')"
+    }
+    if periodo not in filtros:
+        raise HTTPException(400, "periodo debe ser: hoy, semana o mes")
+
     with get_db() as conn:
         rows = conn.execute(
             """SELECT p.id, p.nombre, p.categoria,
@@ -503,6 +567,8 @@ def mas_vendidos(limite: int = 10):
                       SUM(d.subtotal) AS ingresos_totales
                FROM detalle_venta d
                JOIN productos p ON d.producto_id = p.id
+               JOIN ventas v ON d.venta_id = v.id
+               WHERE """ + filtros[periodo] + """
                GROUP BY p.id
                ORDER BY total_vendido DESC
                LIMIT ?""",
@@ -529,7 +595,19 @@ def resumen(periodo: str = "hoy"):
                 FROM ventas WHERE {filtros[periodo]}"""
         ).fetchone()
         alertas = conn.execute(
-            "SELECT COUNT(*) AS c FROM productos WHERE activo=1 AND stock <= stock_minimo"
+            """SELECT COUNT(*) AS c
+               FROM productos p
+               WHERE p.activo=1
+                 AND (
+                    p.stock <= p.stock_minimo
+                    OR EXISTS(
+                        SELECT 1
+                        FROM variantes v
+                        WHERE v.producto_id = p.id
+                          AND v.activo = 1
+                          AND v.stock <= v.stock_minimo
+                    )
+                 )"""
         ).fetchone()
         total_p = conn.execute(
             "SELECT COUNT(*) AS c FROM productos WHERE activo=1"
@@ -592,6 +670,12 @@ def registrar_compra(compra: CompraCrear):
             if not p:
                 raise HTTPException(404, f"Producto ID {item.producto_id} no existe")
 
+            if p["tiene_variantes"] and not item.variante_id:
+                raise HTTPException(
+                    400,
+                    f"'{p['nombre']}' tiene variantes. Debes seleccionar una variante para la compra."
+                )
+
             if item.variante_id:
                 v = conn.execute(
                     "SELECT * FROM variantes WHERE id=? AND producto_id=? AND activo=1",
@@ -635,13 +719,7 @@ def registrar_compra(compra: CompraCrear):
                     "UPDATE variantes SET stock = stock + ? WHERE id=?",
                     (item["cantidad"], item["variante_id"])
                 )
-                # Resincronizar stock total del producto
-                total_var = conn.execute(
-                    "SELECT COALESCE(SUM(stock),0) as t FROM variantes WHERE producto_id=? AND activo=1",
-                    (item["producto_id"],)
-                ).fetchone()["t"]
-                conn.execute("UPDATE productos SET stock=? WHERE id=?",
-                             (total_var, item["producto_id"]))
+                _resincronizar_stock_producto(conn, item["producto_id"])
             else:
                 conn.execute(
                     "UPDATE productos SET stock = stock + ? WHERE id=?",
@@ -682,7 +760,10 @@ def historial_compras(limite: int = 50):
                    WHERE dc.compra_id=?""",
                 (c["id"],)
             ).fetchall()
-            resultado.append({**dict(c), "items": [dict(d) for d in detalles]})
+            resultado.append({
+                **_serialize_row(c),
+                "items": [_serialize_row(d) for d in detalles],
+            })
         return resultado
 
 
@@ -700,7 +781,7 @@ def detalle_compra(id: int):
                WHERE dc.compra_id=?""",
             (id,)
         ).fetchall()
-        return {**dict(c), "items": [dict(d) for d in detalles]}
+        return {**_serialize_row(c), "items": [_serialize_row(d) for d in detalles]}
 
 
 # ────────────────────────────────────────────
@@ -755,6 +836,8 @@ def exportar_reporte(periodo: str = "mes"):
                       SUM(d.subtotal) AS ingresos_totales
                FROM detalle_venta d
                JOIN productos p ON d.producto_id = p.id
+               JOIN ventas v ON d.venta_id = v.id
+               WHERE """ + filtros[periodo] + """
                GROUP BY p.id ORDER BY total_vendido DESC LIMIT 10"""
         ).fetchall()
 
