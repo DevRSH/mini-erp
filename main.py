@@ -1,32 +1,135 @@
 """
 main.py — Mini ERP | FastAPI Backend
-Sprint 4: Variantes, código proveedor, costo envío, margen, escáner
+Sprint 7: Autenticación PIN, backup protegido, lifespan moderno
 """
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, Response, FileResponse
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Request, Response, Cookie
+from fastapi.responses import HTMLResponse, Response as FastResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, validator
 from typing import Optional, List
-from database import init_db, init_compras, get_db
+from database import init_db, init_compras, get_db, DB_PATH
 import os
+import hashlib
+import secrets
+import time
 
-app = FastAPI(title="Mini ERP", version="2.0.0")
+# ────────────────────────────────────────────
+# CONFIGURACIÓN DE SEGURIDAD
+# ────────────────────────────────────────────
 
-APP_ENV = os.environ.get("APP_ENV", "development").lower()
-cors_origins_env = os.environ.get("CORS_ORIGINS", "")
-if APP_ENV == "development" and not cors_origins_env:
-    cors_origins = ["*"]
-else:
-    cors_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
-if not cors_origins:
-    cors_origins = ["http://localhost:8000"]
-app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_methods=["*"], allow_headers=["*"])
+APP_PIN       = os.environ.get("APP_PIN", "1234")          # PIN de 4 dígitos
+BACKUP_KEY    = os.environ.get("BACKUP_KEY", "")           # Clave backup
+SESSION_HOURS = int(os.environ.get("SESSION_HOURS", "8"))  # Duración sesión
+SECRET_KEY    = os.environ.get("SECRET_KEY",               # Clave firma tokens
+                secrets.token_hex(32))
 
-@app.on_event("startup")
-def startup():
+def _hash_pin(pin: str) -> str:
+    return hashlib.sha256(f"{SECRET_KEY}{pin}".encode()).hexdigest()
+
+def _generar_token(pin: str) -> str:
+    """Token = hash(pin) + timestamp de expiración."""
+    expira = int(time.time()) + SESSION_HOURS * 3600
+    raw = f"{_hash_pin(pin)}:{expira}"
+    firma = hashlib.sha256(f"{SECRET_KEY}{raw}".encode()).hexdigest()
+    return f"{raw}:{firma}"
+
+def _validar_token(token: str) -> bool:
+    """Verifica que el token es auténtico y no expiró."""
+    try:
+        partes = token.split(":")
+        if len(partes) != 3:
+            return False
+        hash_pin, expira, firma = partes
+        if int(expira) < int(time.time()):
+            return False
+        raw = f"{hash_pin}:{expira}"
+        firma_esperada = hashlib.sha256(f"{SECRET_KEY}{raw}".encode()).hexdigest()
+        return secrets.compare_digest(firma, firma_esperada)
+    except Exception:
+        return False
+
+# Rutas que no requieren autenticación
+RUTAS_PUBLICAS = {"/", "/login", "/manifest.json",
+                  "/service-worker.js", "/icon-192.png", "/icon-512.png"}
+
+# ────────────────────────────────────────────
+# LIFESPAN (reemplaza @app.on_event deprecado)
+# ────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     init_db()
     init_compras()
+    yield
+
+app = FastAPI(title="Mini ERP", version="3.0.0", lifespan=lifespan)
+
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# ────────────────────────────────────────────
+# MIDDLEWARE DE AUTENTICACIÓN
+# ────────────────────────────────────────────
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+
+    # Rutas públicas pasan sin verificar
+    if path in RUTAS_PUBLICAS:
+        return await call_next(request)
+
+    # El endpoint /api/login tampoco requiere sesión previa
+    if path == "/api/login":
+        return await call_next(request)
+
+    # Verificar cookie de sesión
+    token = request.cookies.get("erp_session")
+    if not token or not _validar_token(token):
+        # Si es llamada API → 401 JSON
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": "No autenticado"}, status_code=401)
+        # Si es página → redirigir al login
+        return RedirectResponse(url="/", status_code=302)
+
+    return await call_next(request)
+
+# ────────────────────────────────────────────
+# AUTENTICACIÓN — ENDPOINTS
+# ────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    pin: str = Field(..., min_length=4, max_length=6)
+
+@app.post("/api/login")
+def login(datos: LoginRequest, response: Response):
+    """Valida el PIN y devuelve una cookie de sesión."""
+    if not secrets.compare_digest(datos.pin.strip(), APP_PIN):
+        raise HTTPException(401, "PIN incorrecto")
+
+    token = _generar_token(datos.pin)
+    response.set_cookie(
+        key="erp_session",
+        value=token,
+        max_age=SESSION_HOURS * 3600,
+        httponly=True,
+        samesite="lax",
+        secure=False,   # True en producción con HTTPS — Railway lo maneja
+    )
+    return {"mensaje": "Acceso concedido", "horas": SESSION_HOURS}
+
+@app.post("/api/logout")
+def logout(response: Response):
+    response.delete_cookie("erp_session")
+    return {"mensaje": "Sesión cerrada"}
+
+@app.get("/api/sesion")
+def verificar_sesion(request: Request):
+    token = request.cookies.get("erp_session")
+    if token and _validar_token(token):
+        return {"autenticado": True}
+    return {"autenticado": False}
 
 # ────────────────────────────────────────────
 # SCHEMAS
@@ -43,8 +146,7 @@ class ProductoCrear(BaseModel):
     codigo_proveedor: str = Field("", max_length=80)
     tiene_variantes: bool = False
 
-    @field_validator("nombre")
-    @classmethod
+    @validator("nombre")
     def nombre_no_vacio(cls, v):
         if not v.strip():
             raise ValueError("El nombre no puede estar vacío")
@@ -75,10 +177,9 @@ class VarianteCrear(BaseModel):
     stock_minimo: int = Field(2, ge=0)
     codigo_barras: str = Field("", max_length=80)
 
-    @field_validator("attr2_valor", mode="after")
-    @classmethod
-    def validar_attr2(cls, v, info):
-        nombre = info.data.get("attr2_nombre")
+    @validator("attr2_valor", always=True)
+    def validar_attr2(cls, v, values):
+        nombre = values.get("attr2_nombre")
         if nombre and not v:
             raise ValueError("Si hay nombre de atributo 2, debe tener valor")
         if not nombre and v:
@@ -105,7 +206,7 @@ class ItemVenta(BaseModel):
 
 
 class VentaCrear(BaseModel):
-    items: List[ItemVenta] = Field(..., min_length=1)
+    items: List[ItemVenta] = Field(..., min_items=1)
     metodo_pago: str = Field("efectivo", pattern="^(efectivo|transferencia|tarjeta)$")
 
 
@@ -124,46 +225,6 @@ def _producto_full(row):
     d = dict(row)
     d.update(_margen(d["precio"], d["costo"], d.get("costo_envio", 0)))
     return d
-
-
-def _to_iso_datetime(value):
-    if isinstance(value, str) and len(value) >= 19 and "T" not in value and " " in value:
-        return value.replace(" ", "T", 1)
-    return value
-
-
-def _serialize_row(row):
-    data = dict(row)
-    if "created_at" in data:
-        data["created_at"] = _to_iso_datetime(data["created_at"])
-    return data
-
-
-def _resincronizar_stock_producto(conn, producto_id: int, desactivar_si_sin_variantes: bool = False):
-    resumen = conn.execute(
-        """SELECT COALESCE(SUM(stock), 0) AS total_stock,
-                  COUNT(*) AS variantes_activas
-           FROM variantes
-           WHERE producto_id=? AND activo=1""",
-        (producto_id,)
-    ).fetchone()
-    total_stock = int(resumen["total_stock"])
-    variantes_activas = int(resumen["variantes_activas"])
-
-    if variantes_activas > 0:
-        conn.execute(
-            "UPDATE productos SET stock=?, tiene_variantes=1 WHERE id=?",
-            (total_stock, producto_id)
-        )
-    elif desactivar_si_sin_variantes:
-        conn.execute(
-            "UPDATE productos SET stock=0, tiene_variantes=0 WHERE id=?",
-            (producto_id,)
-        )
-    else:
-        conn.execute("UPDATE productos SET stock=0 WHERE id=?", (producto_id,))
-
-    return {"stock_total": total_stock, "variantes_activas": variantes_activas}
 
 
 # ────────────────────────────────────────────
@@ -320,9 +381,8 @@ def crear_variante(id: int, datos: VarianteCrear):
              datos.attr2_nombre, datos.attr2_valor,
              datos.stock, datos.stock_minimo, datos.codigo_barras)
         )
-        _resincronizar_stock_producto(conn, id)
         row = conn.execute("SELECT * FROM variantes WHERE id=?", (cursor.lastrowid,)).fetchone()
-        return _serialize_row(row)
+        return dict(row)
 
 
 @app.put("/api/variantes/{id}")
@@ -344,7 +404,7 @@ def editar_variante(id: int, datos: VarianteEditar):
         set_clause = ", ".join(f"{k}=?" for k in campos)
         conn.execute(f"UPDATE variantes SET {set_clause} WHERE id=?", [*campos.values(), id])
         row = conn.execute("SELECT * FROM variantes WHERE id=?", (id,)).fetchone()
-        return _serialize_row(row)
+        return dict(row)
 
 
 @app.delete("/api/variantes/{id}")
@@ -354,13 +414,7 @@ def desactivar_variante(id: int):
         if not v:
             raise HTTPException(404, f"Variante {id} no encontrada")
         conn.execute("UPDATE variantes SET activo=0 WHERE id=?", (id,))
-        estado = _resincronizar_stock_producto(conn, v["producto_id"], desactivar_si_sin_variantes=True)
-        return {
-            "mensaje": "Variante desactivada",
-            "producto_id": v["producto_id"],
-            "stock_total": estado["stock_total"],
-            "variantes_activas": estado["variantes_activas"],
-        }
+        return {"mensaje": "Variante desactivada"}
 
 
 @app.post("/api/variantes/{id}/ajuste")
@@ -375,7 +429,13 @@ def ajustar_stock_variante(id: int, ajuste: AjusteVariante):
             raise HTTPException(400, f"Stock insuficiente. Actual: {v['stock']}")
 
         conn.execute("UPDATE variantes SET stock=? WHERE id=?", (nuevo, id))
-        _resincronizar_stock_producto(conn, v["producto_id"])
+
+        # Sincronizar stock total del producto padre (suma de variantes)
+        total = conn.execute(
+            "SELECT COALESCE(SUM(stock),0) as t FROM variantes WHERE producto_id=? AND activo=1",
+            (v["producto_id"],)
+        ).fetchone()["t"]
+        conn.execute("UPDATE productos SET stock=? WHERE id=?", (total, v["producto_id"]))
 
         return {"variante_id": id, "stock_anterior": v["stock"],
                 "ajuste": ajuste.cantidad, "stock_nuevo": nuevo}
@@ -476,7 +536,13 @@ def registrar_venta(venta: VentaCrear):
                     "UPDATE variantes SET stock = stock - ? WHERE id=?",
                     (item["cantidad"], item["variante_id"])
                 )
-                _resincronizar_stock_producto(conn, item["producto_id"])
+                # Resincronizar stock total del producto
+                total_var = conn.execute(
+                    "SELECT COALESCE(SUM(stock),0) as t FROM variantes WHERE producto_id=? AND activo=1",
+                    (item["producto_id"],)
+                ).fetchone()["t"]
+                conn.execute("UPDATE productos SET stock=? WHERE id=?",
+                             (total_var, item["producto_id"]))
             else:
                 conn.execute(
                     "UPDATE productos SET stock = stock - ? WHERE id=?",
@@ -504,10 +570,7 @@ def historial_ventas(limite: int = 50):
                    WHERE d.venta_id=?""",
                 (v["id"],)
             ).fetchall()
-            resultado.append({
-                **_serialize_row(v),
-                "items": [_serialize_row(d) for d in detalles],
-            })
+            resultado.append({**dict(v), "items": [dict(d) for d in detalles]})
         return resultado
 
 
@@ -522,14 +585,13 @@ def stock_bajo():
             """SELECT id, nombre, stock, stock_minimo, categoria, tiene_variantes,
                       (stock_minimo - stock) AS unidades_faltantes
                FROM productos
-               WHERE activo=1
-               ORDER BY nombre"""
+               WHERE activo=1 AND stock <= stock_minimo
+               ORDER BY unidades_faltantes DESC"""
         ).fetchall()
 
         resultado = []
         for p in productos:
             item = dict(p)
-            vars_bajas = []
             if p["tiene_variantes"]:
                 vars_bajas = conn.execute(
                     """SELECT attr1_nombre, attr1_valor, attr2_nombre, attr2_valor,
@@ -538,30 +600,13 @@ def stock_bajo():
                        WHERE producto_id=? AND activo=1 AND stock <= stock_minimo""",
                     (p["id"],)
                 ).fetchall()
-            if p["stock"] <= p["stock_minimo"] or vars_bajas:
                 item["variantes_bajas"] = [dict(v) for v in vars_bajas]
-                resultado.append(item)
-
-        resultado.sort(
-            key=lambda x: (
-                x["stock_minimo"] - x["stock"],
-                len(x.get("variantes_bajas", [])),
-            ),
-            reverse=True
-        )
+            resultado.append(item)
         return resultado
 
 
 @app.get("/api/reportes/mas-vendidos")
-def mas_vendidos(limite: int = 10, periodo: str = "mes"):
-    filtros = {
-        "hoy":    "date(v.created_at) = date('now','localtime')",
-        "semana": "v.created_at >= date('now','-7 days','localtime')",
-        "mes":    "strftime('%Y-%m', v.created_at) = strftime('%Y-%m', 'now','localtime')"
-    }
-    if periodo not in filtros:
-        raise HTTPException(400, "periodo debe ser: hoy, semana o mes")
-
+def mas_vendidos(limite: int = 10):
     with get_db() as conn:
         rows = conn.execute(
             """SELECT p.id, p.nombre, p.categoria,
@@ -569,8 +614,6 @@ def mas_vendidos(limite: int = 10, periodo: str = "mes"):
                       SUM(d.subtotal) AS ingresos_totales
                FROM detalle_venta d
                JOIN productos p ON d.producto_id = p.id
-               JOIN ventas v ON d.venta_id = v.id
-               WHERE """ + filtros[periodo] + """
                GROUP BY p.id
                ORDER BY total_vendido DESC
                LIMIT ?""",
@@ -597,19 +640,7 @@ def resumen(periodo: str = "hoy"):
                 FROM ventas WHERE {filtros[periodo]}"""
         ).fetchone()
         alertas = conn.execute(
-            """SELECT COUNT(*) AS c
-               FROM productos p
-               WHERE p.activo=1
-                 AND (
-                    p.stock <= p.stock_minimo
-                    OR EXISTS(
-                        SELECT 1
-                        FROM variantes v
-                        WHERE v.producto_id = p.id
-                          AND v.activo = 1
-                          AND v.stock <= v.stock_minimo
-                    )
-                 )"""
+            "SELECT COUNT(*) AS c FROM productos WHERE activo=1 AND stock <= stock_minimo"
         ).fetchone()
         total_p = conn.execute(
             "SELECT COUNT(*) AS c FROM productos WHERE activo=1"
@@ -649,7 +680,7 @@ class CompraCrear(BaseModel):
     proveedor: str = Field("Sin nombre", max_length=100)
     notas: str = Field("", max_length=300)
     costo_envio: float = Field(0, ge=0)
-    items: List[ItemCompra] = Field(..., min_length=1)
+    items: List[ItemCompra] = Field(..., min_items=1)
     actualizar_costo: bool = Field(True, description="Si true, actualiza el costo del producto con el de esta compra")
 
 
@@ -671,12 +702,6 @@ def registrar_compra(compra: CompraCrear):
             ).fetchone()
             if not p:
                 raise HTTPException(404, f"Producto ID {item.producto_id} no existe")
-
-            if p["tiene_variantes"] and not item.variante_id:
-                raise HTTPException(
-                    400,
-                    f"'{p['nombre']}' tiene variantes. Debes seleccionar una variante para la compra."
-                )
 
             if item.variante_id:
                 v = conn.execute(
@@ -721,7 +746,13 @@ def registrar_compra(compra: CompraCrear):
                     "UPDATE variantes SET stock = stock + ? WHERE id=?",
                     (item["cantidad"], item["variante_id"])
                 )
-                _resincronizar_stock_producto(conn, item["producto_id"])
+                # Resincronizar stock total del producto
+                total_var = conn.execute(
+                    "SELECT COALESCE(SUM(stock),0) as t FROM variantes WHERE producto_id=? AND activo=1",
+                    (item["producto_id"],)
+                ).fetchone()["t"]
+                conn.execute("UPDATE productos SET stock=? WHERE id=?",
+                             (total_var, item["producto_id"]))
             else:
                 conn.execute(
                     "UPDATE productos SET stock = stock + ? WHERE id=?",
@@ -762,10 +793,7 @@ def historial_compras(limite: int = 50):
                    WHERE dc.compra_id=?""",
                 (c["id"],)
             ).fetchall()
-            resultado.append({
-                **_serialize_row(c),
-                "items": [_serialize_row(d) for d in detalles],
-            })
+            resultado.append({**dict(c), "items": [dict(d) for d in detalles]})
         return resultado
 
 
@@ -783,7 +811,7 @@ def detalle_compra(id: int):
                WHERE dc.compra_id=?""",
             (id,)
         ).fetchall()
-        return {**_serialize_row(c), "items": [_serialize_row(d) for d in detalles]}
+        return {**dict(c), "items": [dict(d) for d in detalles]}
 
 
 # ────────────────────────────────────────────
@@ -838,8 +866,6 @@ def exportar_reporte(periodo: str = "mes"):
                       SUM(d.subtotal) AS ingresos_totales
                FROM detalle_venta d
                JOIN productos p ON d.producto_id = p.id
-               JOIN ventas v ON d.venta_id = v.id
-               WHERE """ + filtros[periodo] + """
                GROUP BY p.id ORDER BY total_vendido DESC LIMIT 10"""
         ).fetchall()
 
@@ -988,6 +1014,32 @@ def exportar_reporte(periodo: str = "mes"):
         content=html,
         media_type="text/html",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+# ────────────────────────────────────────────
+# SPRINT 7 — BACKUP PROTEGIDO
+# ────────────────────────────────────────────
+
+@app.get("/api/backup")
+def descargar_backup(clave: str = ""):
+    """
+    Descarga el archivo erp.db completo.
+    Requiere clave secreta configurada en variable de entorno BACKUP_KEY.
+    """
+    if not BACKUP_KEY:
+        raise HTTPException(403, "Backup no configurado. Define BACKUP_KEY en Railway.")
+    if not secrets.compare_digest(clave, BACKUP_KEY):
+        raise HTTPException(403, "Clave incorrecta")
+    if not os.path.exists(DB_PATH):
+        raise HTTPException(404, "Base de datos no encontrada")
+
+    from datetime import datetime
+    fecha = datetime.now().strftime("%Y%m%d_%H%M")
+    return FileResponse(
+        DB_PATH,
+        media_type="application/octet-stream",
+        filename=f"backup_erp_{fecha}.db"
     )
 
 
