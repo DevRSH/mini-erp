@@ -1,5 +1,7 @@
 from pathlib import Path
 import sys
+import inspect
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -17,9 +19,14 @@ def isolated_db(tmp_path, monkeypatch):
     db_path = tmp_path / "erp_test.db"
     monkeypatch.setenv("DB_PATH", str(db_path))
     database.DB_PATH = str(db_path)
+    main.DB_PATH = str(db_path)
     database.init_db()
     database.init_compras()
     yield
+
+
+def fake_request(headers=None, cookies=None):
+    return SimpleNamespace(headers=headers or {}, cookies=cookies or {})
 
 
 def crear_producto(nombre, precio=1000, stock=0, tiene_variantes=False, stock_minimo=5):
@@ -198,3 +205,129 @@ def test_historiales_devuelven_created_at_iso():
     )
     ventas = main.historial_ventas()
     assert "T" in ventas[0]["created_at"]
+
+
+def test_api_sesion_sin_cookie_devuelve_autenticado_false():
+    respuesta = main.verificar_sesion(fake_request())
+    assert respuesta == {"autenticado": False}
+
+
+def test_backup_acepta_header_x_backup_key(monkeypatch):
+    monkeypatch.setattr(main, "BACKUP_KEY", "clave-segura")
+    ok = main.descargar_backup(fake_request(headers={"X-Backup-Key": "clave-segura"}))
+    assert "backup_erp_" in ok.filename
+
+    with pytest.raises(HTTPException) as err:
+        main.descargar_backup(fake_request(headers={"X-Backup-Key": "incorrecta"}))
+    assert err.value.status_code == 403
+
+
+def test_backup_query_param_sigue_funcionando_si_endpoint_lo_mantiene(monkeypatch):
+    firma = inspect.signature(main.descargar_backup)
+    if "clave" not in firma.parameters:
+        pytest.skip("El endpoint ya no expone compatibilidad por query param 'clave'.")
+
+    monkeypatch.setattr(main, "BACKUP_KEY", "clave-segura")
+    respuesta = main.descargar_backup(fake_request(), clave="clave-segura")
+    assert "backup_erp_" in respuesta.filename
+
+
+@pytest.mark.parametrize(
+    "ruta",
+    ["/api/ventas", "/api/compras", "/api/reportes/mas-vendidos"],
+)
+def test_limite_positivo_restringe_resultados(ruta):
+    p = crear_producto("Producto limite", stock=20, tiene_variantes=False)
+    main.registrar_venta(
+        main.VentaCrear(
+            metodo_pago="efectivo",
+            items=[main.ItemVenta(producto_id=p["id"], cantidad=1, variante_id=None)],
+        )
+    )
+    main.registrar_compra(
+        main.CompraCrear(
+            proveedor="Proveedor limite",
+            notas="",
+            costo_envio=0,
+            actualizar_costo=True,
+            items=[
+                main.ItemCompra(
+                    producto_id=p["id"],
+                    variante_id=None,
+                    cantidad=1,
+                    costo_unitario=100,
+                )
+            ],
+        )
+    )
+    if ruta == "/api/ventas":
+        respuesta = main.historial_ventas(limite=1)
+    elif ruta == "/api/compras":
+        respuesta = main.historial_compras(limite=1)
+    else:
+        respuesta = main.mas_vendidos(limite=1)
+    assert len(respuesta) <= 1
+
+
+@pytest.mark.parametrize(
+    "ruta",
+    [
+        "/api/ventas",
+        "/api/compras",
+        "/api/reportes/mas-vendidos",
+    ],
+)
+def test_limite_invalido_se_normaliza_sin_romper(ruta):
+    p = crear_producto("Producto limite invalido", stock=20, tiene_variantes=False)
+    main.registrar_venta(
+        main.VentaCrear(
+            metodo_pago="efectivo",
+            items=[main.ItemVenta(producto_id=p["id"], cantidad=1, variante_id=None)],
+        )
+    )
+    main.registrar_compra(
+        main.CompraCrear(
+            proveedor="Proveedor limite invalido",
+            notas="",
+            costo_envio=0,
+            actualizar_costo=True,
+            items=[
+                main.ItemCompra(
+                    producto_id=p["id"],
+                    variante_id=None,
+                    cantidad=1,
+                    costo_unitario=100,
+                )
+            ],
+        )
+    )
+    if ruta == "/api/ventas":
+        respuesta = main.historial_ventas(limite=-1)
+        assert len(respuesta) >= 1
+    elif ruta == "/api/compras":
+        respuesta = main.historial_compras(limite=-1)
+        assert len(respuesta) >= 1
+    else:
+        respuesta = main.mas_vendidos(limite=-1)
+        assert len(respuesta) >= 1
+
+
+def test_cookie_secure_condicionada_por_flag_si_es_viable(monkeypatch):
+    monkeypatch.setattr(main, "APP_PIN", "1234")
+    monkeypatch.setattr(main, "COOKIE_HTTPONLY", True)
+    monkeypatch.setattr(main, "COOKIE_SAMESITE", "lax")
+    monkeypatch.setattr(main, "COOKIE_SECURE", True)
+
+    class ResponseDummy:
+        def __init__(self):
+            self.cookies = None
+
+        def set_cookie(self, **kwargs):
+            self.cookies = kwargs
+
+    response = ResponseDummy()
+    out = main.login(main.LoginRequest(pin="1234"), response)
+    assert out["mensaje"] == "Acceso concedido"
+    assert response.cookies is not None
+    assert response.cookies["secure"] is True
+    assert response.cookies["httponly"] is True

@@ -14,6 +14,7 @@ import os
 import hashlib
 import secrets
 import time
+import sqlite3
 
 # ────────────────────────────────────────────
 # CONFIGURACIÓN DE SEGURIDAD
@@ -24,6 +25,21 @@ BACKUP_KEY    = os.environ.get("BACKUP_KEY", "")           # Clave backup
 SESSION_HOURS = int(os.environ.get("SESSION_HOURS", "8"))  # Duración sesión
 SECRET_KEY    = os.environ.get("SECRET_KEY",               # Clave firma tokens
                 secrets.token_hex(32))
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+_APP_ENV = os.environ.get("APP_ENV", os.environ.get("ENV", "development")).strip().lower()
+COOKIE_SECURE = _env_bool("COOKIE_SECURE", _APP_ENV in {"production", "prod"})
+COOKIE_HTTPONLY = _env_bool("COOKIE_HTTPONLY", True)
+COOKIE_SAMESITE = os.environ.get("COOKIE_SAMESITE", "lax").strip().lower()
+if COOKIE_SAMESITE not in {"lax", "strict", "none"}:
+    COOKIE_SAMESITE = "lax"
 
 def _hash_pin(pin: str) -> str:
     return hashlib.sha256(f"{SECRET_KEY}{pin}".encode()).hexdigest()
@@ -68,6 +84,25 @@ app = FastAPI(title="Mini ERP", version="3.0.0", lifespan=lifespan)
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+
+@app.exception_handler(sqlite3.IntegrityError)
+async def sqlite_integrity_error_handler(_: Request, __: sqlite3.IntegrityError):
+    return JSONResponse(
+        {"detail": "Conflicto de integridad de datos"},
+        status_code=409,
+    )
+
+
+@app.exception_handler(sqlite3.OperationalError)
+async def sqlite_operational_error_handler(_: Request, exc: sqlite3.OperationalError):
+    detail = "Error operativo de base de datos"
+    status = 500
+    mensaje = str(exc).lower()
+    if "locked" in mensaje or "busy" in mensaje:
+        detail = "Base de datos ocupada temporalmente, reintenta"
+        status = 503
+    return JSONResponse({"detail": detail}, status_code=status)
+
 # ────────────────────────────────────────────
 # MIDDLEWARE DE AUTENTICACIÓN
 # ────────────────────────────────────────────
@@ -80,8 +115,8 @@ async def auth_middleware(request: Request, call_next):
     if path in RUTAS_PUBLICAS:
         return await call_next(request)
 
-    # El endpoint /api/login tampoco requiere sesión previa
-    if path == "/api/login":
+    # Endpoints públicos API que no requieren sesión previa
+    if path in {"/api/login", "/api/sesion"}:
         return await call_next(request)
 
     # Verificar cookie de sesión
@@ -113,9 +148,9 @@ def login(datos: LoginRequest, response: Response):
         key="erp_session",
         value=token,
         max_age=SESSION_HOURS * 3600,
-        httponly=True,
-        samesite="lax",
-        secure=False,   # True en producción con HTTPS — Railway lo maneja
+        httponly=COOKIE_HTTPONLY,
+        samesite=COOKIE_SAMESITE,
+        secure=COOKIE_SECURE,
     )
     return {"mensaje": "Acceso concedido", "horas": SESSION_HOURS}
 
@@ -499,6 +534,8 @@ def buscar_por_codigo(codigo: str):
 @app.post("/api/ventas", status_code=201)
 def registrar_venta(venta: VentaCrear):
     with get_db() as conn:
+        # Evita carreras de escritura al validar/descontar stock en operaciones concurrentes.
+        conn.execute("BEGIN IMMEDIATE")
         items_validados = []
         total = 0.0
 
@@ -558,10 +595,15 @@ def registrar_venta(venta: VentaCrear):
                  item["cantidad"], item["precio_unitario"], item["subtotal"])
             )
             if item["tiene_variantes"]:
-                conn.execute(
-                    "UPDATE variantes SET stock = stock - ? WHERE id=?",
-                    (item["cantidad"], item["variante_id"])
+                cur = conn.execute(
+                    "UPDATE variantes SET stock = stock - ? WHERE id=? AND stock >= ?",
+                    (item["cantidad"], item["variante_id"], item["cantidad"])
                 )
+                if cur.rowcount != 1:
+                    raise HTTPException(
+                        409,
+                        f"Stock cambió durante la operación para variante {item['variante_id']}. Reintenta."
+                    )
                 # Resincronizar stock total del producto
                 total_var = conn.execute(
                     "SELECT COALESCE(SUM(stock),0) as t FROM variantes WHERE producto_id=? AND activo=1",
@@ -570,10 +612,15 @@ def registrar_venta(venta: VentaCrear):
                 conn.execute("UPDATE productos SET stock=? WHERE id=?",
                              (total_var, item["producto_id"]))
             else:
-                conn.execute(
-                    "UPDATE productos SET stock = stock - ? WHERE id=?",
-                    (item["cantidad"], item["producto_id"])
+                cur = conn.execute(
+                    "UPDATE productos SET stock = stock - ? WHERE id=? AND stock >= ?",
+                    (item["cantidad"], item["producto_id"], item["cantidad"])
                 )
+                if cur.rowcount != 1:
+                    raise HTTPException(
+                        409,
+                        f"Stock cambió durante la operación para producto {item['producto_id']}. Reintenta."
+                    )
 
         return {"venta_id": venta_id, "total": total,
                 "metodo_pago": venta.metodo_pago, "items": items_validados}
@@ -581,6 +628,7 @@ def registrar_venta(venta: VentaCrear):
 
 @app.get("/api/ventas")
 def historial_ventas(limite: int = 50):
+    limite = max(1, min(limite, 200))
     with get_db() as conn:
         ventas = conn.execute(
             "SELECT * FROM ventas ORDER BY created_at DESC LIMIT ?", (limite,)
@@ -640,6 +688,7 @@ def stock_bajo():
 
 @app.get("/api/reportes/mas-vendidos")
 def mas_vendidos(limite: int = 10, periodo: str = "todo"):
+    limite = max(1, min(limite, 100))
     filtros = {
         "todo": "1=1",
         "hoy": "date(v.created_at) = date('now','localtime')",
@@ -736,6 +785,8 @@ def registrar_compra(compra: CompraCrear):
     Opcionalmente actualiza el costo unitario del producto.
     """
     with get_db() as conn:
+        # Serializa escrituras durante la compra para mantener consistencia de inventario.
+        conn.execute("BEGIN IMMEDIATE")
         items_validados = []
         subtotal = 0.0
 
@@ -825,6 +876,7 @@ def registrar_compra(compra: CompraCrear):
 
 @app.get("/api/compras")
 def historial_compras(limite: int = 50):
+    limite = max(1, min(limite, 200))
     with get_db() as conn:
         compras = conn.execute(
             "SELECT * FROM compras ORDER BY created_at DESC LIMIT ?", (limite,)
@@ -1073,14 +1125,16 @@ def exportar_reporte(periodo: str = "mes"):
 # ────────────────────────────────────────────
 
 @app.get("/api/backup")
-def descargar_backup(clave: str = ""):
+def descargar_backup(request: Request, clave: str = ""):
     """
     Descarga el archivo erp.db completo.
     Requiere clave secreta configurada en variable de entorno BACKUP_KEY.
     """
     if not BACKUP_KEY:
         raise HTTPException(403, "Backup no configurado. Define BACKUP_KEY en Railway.")
-    if not secrets.compare_digest(clave, BACKUP_KEY):
+    clave_header = request.headers.get("X-Backup-Key", "")
+    clave_efectiva = clave_header or clave
+    if not secrets.compare_digest(clave_efectiva, BACKUP_KEY):
         raise HTTPException(403, "Clave incorrecta")
     if not os.path.exists(DB_PATH):
         raise HTTPException(404, "Base de datos no encontrada")

@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mini ERP</title>
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json">
@@ -1486,6 +1486,8 @@
     <button class="nav-btn" onclick="navTo('inventario')" id="nav-inventario"><span
         class="icon">📦</span>Inventario</button>
     <button class="nav-btn" onclick="navTo('ventas')" id="nav-ventas"><span class="icon">💰</span>Vender</button>
+    <button class="nav-btn" onclick="navTo('historial')" id="nav-historial"><span
+        class="icon">📋</span>Historial</button>
     <button class="nav-btn" onclick="navTo('compras')" id="nav-compras"><span class="icon">🚚</span>Compras</button>
     <button class="nav-btn" onclick="navTo('reportes')" id="nav-reportes"><span class="icon">📊</span>Reportes</button>
   </nav>
@@ -1889,13 +1891,27 @@
     // ═══════════════════════════════════════════
     const $ = id => document.getElementById(id);
     const fmt = n => (n == null || isNaN(n)) ? '—' : '$' + Number(n).toLocaleString('es-CL');
+    const ALLOWED_TOAST_TYPES = new Set(['success', 'error', 'info']);
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
 
     function toast(msg, tipo = 'success') {
       const c = $('toast-container');
       const el = document.createElement('div');
       const ic = { success: '✅', error: '❌', info: 'ℹ️' };
-      el.className = `toast ${tipo}`;
-      el.innerHTML = `<span>${ic[tipo] || ''}</span><span>${msg}</span>`;
+      const safeType = ALLOWED_TOAST_TYPES.has(tipo) ? tipo : 'success';
+      el.className = `toast ${safeType}`;
+      const icon = document.createElement('span');
+      icon.textContent = ic[safeType] || '';
+      const message = document.createElement('span');
+      message.textContent = String(msg ?? '');
+      el.append(icon, message);
       c.appendChild(el);
       setTimeout(() => el.remove(), 3500);
     }
@@ -2009,13 +2025,13 @@
         const mc = marginClass(p.margen_pct || 0);
         const mg = p.costo > 0 ? `<div class="product-margin ${mc}">Margen: ${p.margen_pct}%</div>` : '';
         const cv = p.tiene_variantes ? `<span class="variante-badge">Con variantes</span>` : '';
-        const cod = p.codigo_proveedor ? `<div class="product-cod">🏷️ ${p.codigo_proveedor}</div>` : '';
+        const cod = p.codigo_proveedor ? `<div class="product-cod">🏷️ ${escapeHtml(p.codigo_proveedor)}</div>` : '';
         return `
       <div class="product-card ${sc}">
         <div class="product-icon">${ic}</div>
         <div class="product-info">
-          <div class="product-name">${p.nombre}</div>
-          <div class="product-cat">${p.categoria}</div>
+          <div class="product-name">${escapeHtml(p.nombre)}</div>
+          <div class="product-cat">${escapeHtml(p.categoria)}</div>
           ${cod}${cv}
         </div>
         <div class="product-meta">
@@ -2481,8 +2497,10 @@
         $('lista-ventas').innerHTML = ventas.map(v => {
           const fecha = new Date(v.created_at).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
           const itemsTxt = v.items.map(i => {
-            const etiq = i.attr2_valor ? ` (${i.attr1_valor}/${i.attr2_valor})` : i.attr1_valor ? ` (${i.attr1_valor})` : '';
-            return `${i.nombre}${etiq} ×${i.cantidad}`;
+            const attr1 = escapeHtml(i.attr1_valor);
+            const attr2 = escapeHtml(i.attr2_valor);
+            const etiq = i.attr2_valor ? ` (${attr1}/${attr2})` : i.attr1_valor ? ` (${attr1})` : '';
+            return `${escapeHtml(i.nombre)}${etiq} ×${i.cantidad}`;
           }).join(', ');
           return `
         <div class="sale-card">
@@ -2490,7 +2508,7 @@
             <div><div class="sale-id">#${String(v.id).padStart(4, '0')}</div><div class="sale-date">${fecha}</div></div>
             <div style="text-align:right;">
               <div class="sale-total">${fmt(v.total)}</div>
-              <span class="sale-method">${mic[v.metodo_pago] || ''} ${v.metodo_pago}</span>
+              <span class="sale-method">${mic[v.metodo_pago] || ''} ${escapeHtml(v.metodo_pago)}</span>
             </div>
           </div>
           <div class="sale-items-list">📦 ${itemsTxt}</div>
@@ -2784,14 +2802,16 @@
         $('lista-compras').innerHTML = compras.map(c => {
           const fecha = new Date(c.created_at).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
           const itemsTxt = c.items.map(i => {
-            const etiq = i.attr2_valor ? ` (${i.attr1_valor}/${i.attr2_valor})` : i.attr1_valor ? ` (${i.attr1_valor})` : '';
-            return `${i.nombre}${etiq} ×${i.cantidad}`;
+            const attr1 = escapeHtml(i.attr1_valor);
+            const attr2 = escapeHtml(i.attr2_valor);
+            const etiq = i.attr2_valor ? ` (${attr1}/${attr2})` : i.attr1_valor ? ` (${attr1})` : '';
+            return `${escapeHtml(i.nombre)}${etiq} ×${i.cantidad}`;
           }).join(', ');
           return `
         <div class="sale-card">
           <div class="sale-header">
             <div>
-              <div class="sale-id">#${String(c.id).padStart(4, '0')} — ${c.proveedor}</div>
+              <div class="sale-id">#${String(c.id).padStart(4, '0')} — ${escapeHtml(c.proveedor)}</div>
               <div class="sale-date">${fecha}</div>
             </div>
             <div style="text-align:right;">
@@ -2800,7 +2820,7 @@
             </div>
           </div>
           <div class="sale-items-list">📦 ${itemsTxt}</div>
-          ${c.notas ? `<div style="font-size:12px;color:var(--muted);margin-top:4px;">📝 ${c.notas}</div>` : ''}
+          ${c.notas ? `<div style="font-size:12px;color:var(--muted);margin-top:4px;">📝 ${escapeHtml(c.notas)}</div>` : ''}
         </div>`;
         }).join('');
       } catch (e) { $('lista-compras').innerHTML = `<div class="alert-box danger"><span>${e.message}</span></div>`; }
