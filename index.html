@@ -1925,6 +1925,10 @@
       return data;
     }
 
+    async function obtenerVariantesProducto(productId) {
+      return await api('GET', `/api/products/${productId}/variants`);
+    }
+
     function cerrarModales() {
       document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('open'));
       detenerScanner();
@@ -2007,7 +2011,7 @@
     async function cargarInventario() {
       $('lista-productos').innerHTML = '<div class="spinner"></div>';
       try {
-        todosProductos = await api('GET', '/api/productos');
+        todosProductos = await api('GET', '/api/products');
         renderInventario(todosProductos);
         actualizarDatalistCategorias();
       } catch (e) { $('lista-productos').innerHTML = `<div class="alert-box danger"><span>${e.message}</span></div>`; }
@@ -2082,7 +2086,7 @@
       if (!nombre) { toast('Ingresa un nombre', 'error'); return; }
       if (isNaN(precio) || precio < 0) { toast('Precio inválido', 'error'); return; }
       try {
-        await api('POST', '/api/productos', {
+        await api('POST', '/api/products', {
           nombre, precio,
           costo: parseFloat($('new-costo').value) || 0,
           costo_envio: parseFloat($('new-costo-envio').value) || 0,
@@ -2113,7 +2117,7 @@
     async function guardarEdicion() {
       const id = parseInt($('edit-id').value);
       try {
-        await api('PUT', `/api/productos/${id}`, {
+        await api('PUT', `/api/products/${id}`, {
           nombre: $('edit-nombre').value.trim(),
           precio: parseFloat($('edit-precio').value),
           costo: parseFloat($('edit-costo').value),
@@ -2142,7 +2146,7 @@
 
     async function refrescarVariantesLista(productoId) {
       try {
-        const datos = await api('GET', `/api/productos/${productoId}/variantes`);
+        const datos = await obtenerVariantesProducto(productoId);
         $('variantes-titulo').textContent = `📦 ${datos.producto} — Variantes`;
         const lista = datos.variantes;
         if (!lista.length) {
@@ -2190,7 +2194,7 @@
       const a2v = tieneA2 ? $('var-attr2-valor').value.trim() : null;
       if (tieneA2 && (!a2n || !a2v)) { toast('Completa el atributo 2 o desactívalo', 'error'); return; }
       try {
-        await api('POST', `/api/productos/${pid}/variantes`, {
+        await api('POST', `/api/products/${pid}/variants`, {
           attr1_nombre: a1n, attr1_valor: a1v,
           attr2_nombre: a2n || null, attr2_valor: a2v || null,
           stock: parseInt($('var-stock').value) || 0,
@@ -2235,7 +2239,7 @@
       const motivo = $('ajuste-motivo').value || 'Ajuste manual';
       if (!cant || cant <= 0) { toast('Cantidad inválida', 'error'); return; }
       try {
-        const endpoint = tipo === 'variante' ? `/api/variantes/${id}/ajuste` : `/api/productos/${id}/ajuste`;
+        const endpoint = tipo === 'variante' ? `/api/variantes/${id}/ajuste` : `/api/products/${id}/adjust`;
         const res = await api('POST', endpoint, { cantidad: signo * cant, motivo });
         toast(`Stock: ${res.stock_anterior} → ${res.stock_nuevo} ✅`);
         cerrarModales(); cargarInventario();
@@ -2251,7 +2255,7 @@
     }
     async function eliminarProducto() {
       try {
-        const res = await api('DELETE', `/api/productos/${parseInt($('eliminar-id').value)}`);
+        const res = await api('DELETE', `/api/products/${parseInt($('eliminar-id').value)}`);
         toast(res.mensaje); cerrarModales(); cargarInventario();
       } catch (e) { toast(e.message, 'error'); }
     }
@@ -2355,7 +2359,7 @@
     // ═══════════════════════════════════════════
     async function cargarProductosVenta() {
       try {
-        productosVenta = await api('GET', '/api/productos');
+        productosVenta = await api('GET', '/api/products');
         renderProductosVenta(productosVenta);
       } catch (e) { toast('Error cargando productos', 'error'); }
     }
@@ -2402,7 +2406,7 @@
 
     async function elegirVariante(prodId, prodNombre) {
       try {
-        const datos = await api('GET', `/api/productos/${prodId}/variantes`);
+        const datos = await obtenerVariantesProducto(prodId);
         const vars = datos.variantes.filter(v => v.activo);
         if (!vars.length) { toast('Sin variantes activas', 'error'); return; }
         $('elegir-variante-titulo').textContent = `📦 ${prodNombre}`;
@@ -2625,7 +2629,7 @@
 
     async function asegurarProductosCargados() {
       if (todosProductos.length) return;
-      todosProductos = await api('GET', '/api/productos');
+      todosProductos = await api('GET', '/api/products');
     }
 
     async function openModalCompra() {
@@ -2731,7 +2735,7 @@
 
     async function cargarVariantesSelectCompra(idx, prodId, varSeleccionada) {
       try {
-        const datos = await api('GET', `/api/productos/${prodId}/variantes`);
+        const datos = await obtenerVariantesProducto(prodId);
         const sel = $(`ci-var-${idx}`);
         if (!sel) return;
         sel.innerHTML = '<option value="">— Seleccionar variante —</option>' +
