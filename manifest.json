@@ -1,6 +1,6 @@
 {
-  "name": "Mini ERP",
-  "short_name": "Mini ERP",
+  "name": "Fika",
+  "short_name": "Fika",
   "description": "Control de inventario, ventas y reportes",
   "start_url": "/",
   "display": "standalone",

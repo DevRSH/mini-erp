@@ -80,7 +80,7 @@ async def lifespan(app: FastAPI):
     init_compras()
     yield
 
-app = FastAPI(title="Mini ERP", version="3.0.0", lifespan=lifespan)
+app = FastAPI(title="Fika", version="3.0.0", lifespan=lifespan)
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -1058,7 +1058,7 @@ def exportar_reporte(periodo: str = "mes"):
 <body>
 
 <div class="header">
-  <h1>🏪 Reporte Mini ERP</h1>
+    <h1>🏪 Reporte Fika</h1>
   <p>Período: <strong>{nombre_per}</strong> &nbsp;|&nbsp; Generado: {ahora}</p>
 </div>
 
@@ -1106,7 +1106,7 @@ def exportar_reporte(periodo: str = "mes"):
 </div>
 
 <div class="footer">
-  Mini ERP — Generado automáticamente el {ahora}
+    Fika — Generado automáticamente el {ahora}
 </div>
 
 </body>
