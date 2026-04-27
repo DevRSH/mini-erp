@@ -352,6 +352,7 @@ def _validar_operable_para_correccion(row, etiqueta: str):
 # SPRINT 1 — INVENTARIO
 # ────────────────────────────────────────────
 
+@app.get("/api/products")
 @app.get("/api/productos")
 def listar_productos(categoria: Optional[str] = None, solo_activos: bool = True):
     with get_db() as conn:
@@ -371,6 +372,7 @@ def listar_productos(categoria: Optional[str] = None, solo_activos: bool = True)
         return [_producto_full(r) for r in rows]
 
 
+@app.post("/api/products", status_code=201)
 @app.post("/api/productos", status_code=201)
 def crear_producto(datos: ProductoCrear):
     with get_db() as conn:
@@ -394,6 +396,7 @@ def crear_producto(datos: ProductoCrear):
         return _producto_full(row)
 
 
+@app.put("/api/products/{id}")
 @app.put("/api/productos/{id}")
 def editar_producto(id: int, datos: ProductoEditar):
     with get_db() as conn:
@@ -418,6 +421,7 @@ def editar_producto(id: int, datos: ProductoEditar):
         return _producto_full(row)
 
 
+@app.delete("/api/products/{id}")
 @app.delete("/api/productos/{id}")
 def desactivar_producto(id: int):
     with get_db() as conn:
@@ -431,6 +435,7 @@ def desactivar_producto(id: int):
         return {"mensaje": f"Producto '{p['nombre']}' desactivado"}
 
 
+@app.post("/api/products/{id}/adjust")
 @app.post("/api/productos/{id}/ajuste")
 def ajustar_stock(id: int, ajuste: AjusteStock):
     with get_db() as conn:
@@ -455,6 +460,7 @@ def ajustar_stock(id: int, ajuste: AjusteStock):
 # SPRINT 4 — VARIANTES
 # ────────────────────────────────────────────
 
+@app.get("/api/products/{id}/variants")
 @app.get("/api/productos/{id}/variantes")
 def listar_variantes(id: int):
     with get_db() as conn:
@@ -471,6 +477,7 @@ def listar_variantes(id: int):
         return {"producto": p["nombre"], "variantes": [dict(r) for r in rows]}
 
 
+@app.post("/api/products/{id}/variants", status_code=201)
 @app.post("/api/productos/{id}/variantes", status_code=201)
 def crear_variante(id: int, datos: VarianteCrear):
     with get_db() as conn:

@@ -125,6 +125,38 @@ def test_compra_con_variante_resincroniza_producto():
     assert producto["stock"] == 5
 
 
+def test_compra_producto_sin_variantes_funciona():
+    p = crear_producto("Cuaderno base", stock=1, tiene_variantes=False)
+    compra = main.registrar_compra(
+        main.CompraCrear(
+            proveedor="Proveedor base",
+            notas="",
+            costo_envio=0,
+            actualizar_costo=True,
+            items=[
+                main.ItemCompra(
+                    producto_id=p["id"],
+                    variante_id=None,
+                    cantidad=4,
+                    costo_unitario=150,
+                )
+            ],
+        )
+    )
+    assert compra["compra_id"] > 0
+    inventario = main.listar_productos()
+    producto = next(x for x in inventario if x["id"] == p["id"])
+    assert producto["stock"] == 5
+
+
+def test_endpoint_alias_variantes_en_ingles():
+    p = crear_producto("Poleron alias", stock=0, tiene_variantes=True)
+    v = crear_variante(p["id"], "M", stock=2)
+    out = main.listar_variantes(p["id"])
+    assert out["producto"] == "Poleron alias"
+    assert any(item["id"] == v["id"] for item in out["variantes"])
+
+
 def test_desactivar_ultima_variante_desactiva_modo_variantes():
     p = crear_producto("Gorro", stock=0, tiene_variantes=True)
     v = crear_variante(p["id"], "Azul", stock=4)
