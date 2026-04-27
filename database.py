@@ -62,6 +62,14 @@ def _tabla_existe(conn, tabla):
     return r is not None
 
 
+def _obtener_sql_tabla(conn, tabla):
+    r = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+        (tabla,),
+    ).fetchone()
+    return (r["sql"] or "") if r else ""
+
+
 def init_db():
     with get_db() as conn:
         conn.executescript("""
@@ -158,3 +166,55 @@ def init_compras():
                 CREATE INDEX IF NOT EXISTS idx_detalle_compra_id  ON detalle_compra(compra_id);
                 CREATE INDEX IF NOT EXISTS idx_detalle_compra_prod ON detalle_compra(producto_id);
             """)
+
+        compras_cols = _columnas_existentes(conn, "compras")
+        if "estado" not in compras_cols:
+            conn.execute("ALTER TABLE compras ADD COLUMN estado TEXT NOT NULL DEFAULT 'active'")
+        if "corrected_from_id" not in compras_cols:
+            conn.execute("ALTER TABLE compras ADD COLUMN corrected_from_id INTEGER")
+        if "corrected_by_id" not in compras_cols:
+            conn.execute("ALTER TABLE compras ADD COLUMN corrected_by_id INTEGER")
+
+        ventas_cols = _columnas_existentes(conn, "ventas")
+        if "estado" not in ventas_cols:
+            conn.execute("ALTER TABLE ventas ADD COLUMN estado TEXT NOT NULL DEFAULT 'active'")
+        if "corrected_from_id" not in ventas_cols:
+            conn.execute("ALTER TABLE ventas ADD COLUMN corrected_from_id INTEGER")
+        if "corrected_by_id" not in ventas_cols:
+            conn.execute("ALTER TABLE ventas ADD COLUMN corrected_by_id INTEGER")
+
+        if not _tabla_existe(conn, "transaction_logs"):
+            conn.executescript("""
+                CREATE TABLE transaction_logs (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entity_type   TEXT    NOT NULL CHECK(entity_type IN ('purchase', 'sale')),
+                    entity_id     INTEGER NOT NULL,
+                    action        TEXT    NOT NULL CHECK(action IN ('create', 'update', 'cancel', 'link_correction')),
+                    previous_data TEXT,
+                    new_data      TEXT,
+                    timestamp     TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_transaction_logs_entity
+                    ON transaction_logs(entity_type, entity_id, timestamp DESC);
+            """)
+        else:
+            sql_def = _obtener_sql_tabla(conn, "transaction_logs")
+            if "link_correction" not in sql_def:
+                conn.executescript("""
+                    ALTER TABLE transaction_logs RENAME TO transaction_logs_old;
+                    CREATE TABLE transaction_logs (
+                        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                        entity_type   TEXT    NOT NULL CHECK(entity_type IN ('purchase', 'sale')),
+                        entity_id     INTEGER NOT NULL,
+                        action        TEXT    NOT NULL CHECK(action IN ('create', 'update', 'cancel', 'link_correction')),
+                        previous_data TEXT,
+                        new_data      TEXT,
+                        timestamp     TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+                    );
+                    INSERT INTO transaction_logs (id, entity_type, entity_id, action, previous_data, new_data, timestamp)
+                    SELECT id, entity_type, entity_id, action, previous_data, new_data, timestamp
+                    FROM transaction_logs_old;
+                    DROP TABLE transaction_logs_old;
+                    CREATE INDEX IF NOT EXISTS idx_transaction_logs_entity
+                        ON transaction_logs(entity_type, entity_id, timestamp DESC);
+                """)

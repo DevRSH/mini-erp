@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
 from typing import Optional, List
 from database import init_db, init_compras, get_db, DB_PATH
+from audit_service import log_transaction, snapshot_sale, snapshot_purchase, list_logs
 import os
 import hashlib
 import secrets
@@ -245,6 +246,11 @@ class VentaCrear(BaseModel):
     metodo_pago: str = Field("efectivo", pattern="^(efectivo|transferencia|tarjeta)$")
 
 
+class VentaCorreccion(BaseModel):
+    metodo_pago: str = Field("efectivo", pattern="^(efectivo|transferencia|tarjeta)$")
+    items: List[ItemVenta] = Field(..., min_items=1)
+
+
 # ── HELPER ──────────────────────────────────
 def _margen(precio, costo, costo_envio):
     costo_real = (costo or 0) + (costo_envio or 0)
@@ -266,6 +272,80 @@ def _to_iso_dt(value):
         return value
     # SQLite datetime('now') => "YYYY-MM-DD HH:MM:SS"
     return value.replace(" ", "T", 1) if " " in value else value
+
+
+def _aplicar_delta_stock(conn, producto_id: int, variante_id: Optional[int], delta: int):
+    if delta == 0:
+        return
+    if variante_id:
+        if delta < 0:
+            cur = conn.execute(
+                "UPDATE variantes SET stock = stock + ? WHERE id=? AND producto_id=? AND activo=1 AND stock >= ?",
+                (delta, variante_id, producto_id, abs(delta)),
+            )
+            if cur.rowcount != 1:
+                raise HTTPException(409, f"Stock insuficiente para variante {variante_id}")
+        else:
+            cur = conn.execute(
+                "UPDATE variantes SET stock = stock + ? WHERE id=? AND producto_id=? AND activo=1",
+                (delta, variante_id, producto_id),
+            )
+            if cur.rowcount != 1:
+                raise HTTPException(404, f"Variante {variante_id} no encontrada")
+        total_var = conn.execute(
+            "SELECT COALESCE(SUM(stock),0) as t FROM variantes WHERE producto_id=? AND activo=1",
+            (producto_id,),
+        ).fetchone()["t"]
+        conn.execute("UPDATE productos SET stock=? WHERE id=?", (total_var, producto_id))
+    else:
+        if delta < 0:
+            cur = conn.execute(
+                "UPDATE productos SET stock = stock + ? WHERE id=? AND activo=1 AND stock >= ?",
+                (delta, producto_id, abs(delta)),
+            )
+            if cur.rowcount != 1:
+                raise HTTPException(409, f"Stock insuficiente para producto {producto_id}")
+        else:
+            cur = conn.execute(
+                "UPDATE productos SET stock = stock + ? WHERE id=? AND activo=1",
+                (delta, producto_id),
+            )
+            if cur.rowcount != 1:
+                raise HTTPException(404, f"Producto {producto_id} no encontrado")
+
+
+def _validar_consistencia_stock_producto(conn, producto_id: int):
+    row = conn.execute(
+        "SELECT id, stock, tiene_variantes FROM productos WHERE id=? AND activo=1",
+        (producto_id,),
+    ).fetchone()
+    if not row:
+        return
+    if row["stock"] < 0:
+        raise HTTPException(409, f"Stock negativo detectado para producto {producto_id}")
+    if row["tiene_variantes"]:
+        total_var = conn.execute(
+            "SELECT COALESCE(SUM(stock),0) AS t FROM variantes WHERE producto_id=? AND activo=1",
+            (producto_id,),
+        ).fetchone()["t"]
+        if total_var < 0:
+            raise HTTPException(409, f"Stock negativo detectado en variantes del producto {producto_id}")
+        if total_var != row["stock"]:
+            conn.execute("UPDATE productos SET stock=? WHERE id=?", (total_var, producto_id))
+
+
+def _validar_operable_para_cancelacion(row, etiqueta: str):
+    if row["estado"] != "active":
+        raise HTTPException(400, f"La {etiqueta} ya está cancelada")
+    if row["corrected_by_id"] is not None:
+        raise HTTPException(409, f"La {etiqueta} {row['id']} ya fue corregida por {row['corrected_by_id']}")
+
+
+def _validar_operable_para_correccion(row, etiqueta: str):
+    _validar_operable_para_cancelacion(row, etiqueta)
+    # Politica: una sola correccion por transaccion (sin cadena).
+    if row["corrected_from_id"] is not None:
+        raise HTTPException(409, f"La {etiqueta} {row['id']} es una correccion y no puede corregirse de nuevo")
 
 
 # ────────────────────────────────────────────
@@ -531,46 +611,37 @@ def buscar_por_codigo(codigo: str):
 # SPRINT 2 — VENTAS
 # ────────────────────────────────────────────
 
-@app.post("/api/ventas", status_code=201)
-def registrar_venta(venta: VentaCrear):
-    with get_db() as conn:
-        # Evita carreras de escritura al validar/descontar stock en operaciones concurrentes.
-        conn.execute("BEGIN IMMEDIATE")
-        items_validados = []
-        total = 0.0
+def _crear_venta_en_transaccion(conn, venta: VentaCrear, corrected_from_id: Optional[int] = None):
+    items_validados = []
+    total = 0.0
+    productos_tocados = set()
 
-        for item in venta.items:
-            p = conn.execute(
-                "SELECT * FROM productos WHERE id=? AND activo=1", (item.producto_id,)
+    for item in venta.items:
+        p = conn.execute(
+            "SELECT * FROM productos WHERE id=? AND activo=1", (item.producto_id,)
+        ).fetchone()
+        if not p:
+            raise HTTPException(404, f"Producto ID {item.producto_id} no existe")
+
+        if p["tiene_variantes"]:
+            if not item.variante_id:
+                raise HTTPException(400, f"'{p['nombre']}' tiene variantes. Debes seleccionar una.")
+            v = conn.execute(
+                "SELECT * FROM variantes WHERE id=? AND producto_id=? AND activo=1",
+                (item.variante_id, item.producto_id),
             ).fetchone()
-            if not p:
-                raise HTTPException(404, f"Producto ID {item.producto_id} no existe")
+            if not v:
+                raise HTTPException(404, f"Variante {item.variante_id} no encontrada")
+            if v["stock"] < item.cantidad:
+                raise HTTPException(400, f"Stock insuficiente en variante {item.variante_id}")
+        elif p["stock"] < item.cantidad:
+            raise HTTPException(400, f"Stock insuficiente para producto {item.producto_id}")
 
-            if p["tiene_variantes"]:
-                if not item.variante_id:
-                    raise HTTPException(400, f"'{p['nombre']}' tiene variantes. Debes seleccionar una.")
-                v = conn.execute(
-                    "SELECT * FROM variantes WHERE id=? AND producto_id=? AND activo=1",
-                    (item.variante_id, item.producto_id)
-                ).fetchone()
-                if not v:
-                    raise HTTPException(404, f"Variante {item.variante_id} no encontrada")
-                if v["stock"] < item.cantidad:
-                    etiqueta = f"{v['attr1_valor']}"
-                    if v["attr2_valor"]:
-                        etiqueta += f" / {v['attr2_valor']}"
-                    raise HTTPException(400,
-                        f"Stock insuficiente: '{p['nombre']}' ({etiqueta}). "
-                        f"Disponible: {v['stock']}, solicitado: {item.cantidad}")
-            else:
-                if p["stock"] < item.cantidad:
-                    raise HTTPException(400,
-                        f"Stock insuficiente: '{p['nombre']}'. "
-                        f"Disponible: {p['stock']}, solicitado: {item.cantidad}")
-
-            subtotal = p["precio"] * item.cantidad
-            total += subtotal
-            items_validados.append({
+        subtotal = p["precio"] * item.cantidad
+        total += subtotal
+        productos_tocados.add(item.producto_id)
+        items_validados.append(
+            {
                 "producto_id": item.producto_id,
                 "variante_id": item.variante_id,
                 "nombre": p["nombre"],
@@ -578,52 +649,35 @@ def registrar_venta(venta: VentaCrear):
                 "precio_unitario": p["precio"],
                 "subtotal": subtotal,
                 "tiene_variantes": bool(p["tiene_variantes"]),
-            })
-
-        # Persistencia atómica
-        cursor = conn.execute(
-            "INSERT INTO ventas (total, metodo_pago) VALUES (?,?)", (total, venta.metodo_pago)
+            }
         )
-        venta_id = cursor.lastrowid
 
-        for item in items_validados:
-            conn.execute(
-                """INSERT INTO detalle_venta
-                   (venta_id, producto_id, variante_id, cantidad, precio_unitario, subtotal)
-                   VALUES (?,?,?,?,?,?)""",
-                (venta_id, item["producto_id"], item["variante_id"],
-                 item["cantidad"], item["precio_unitario"], item["subtotal"])
-            )
-            if item["tiene_variantes"]:
-                cur = conn.execute(
-                    "UPDATE variantes SET stock = stock - ? WHERE id=? AND stock >= ?",
-                    (item["cantidad"], item["variante_id"], item["cantidad"])
-                )
-                if cur.rowcount != 1:
-                    raise HTTPException(
-                        409,
-                        f"Stock cambió durante la operación para variante {item['variante_id']}. Reintenta."
-                    )
-                # Resincronizar stock total del producto
-                total_var = conn.execute(
-                    "SELECT COALESCE(SUM(stock),0) as t FROM variantes WHERE producto_id=? AND activo=1",
-                    (item["producto_id"],)
-                ).fetchone()["t"]
-                conn.execute("UPDATE productos SET stock=? WHERE id=?",
-                             (total_var, item["producto_id"]))
-            else:
-                cur = conn.execute(
-                    "UPDATE productos SET stock = stock - ? WHERE id=? AND stock >= ?",
-                    (item["cantidad"], item["producto_id"], item["cantidad"])
-                )
-                if cur.rowcount != 1:
-                    raise HTTPException(
-                        409,
-                        f"Stock cambió durante la operación para producto {item['producto_id']}. Reintenta."
-                    )
+    cursor = conn.execute(
+        """INSERT INTO ventas (total, metodo_pago, estado, corrected_from_id, corrected_by_id)
+           VALUES (?,?,?,?,NULL)""",
+        (total, venta.metodo_pago, "active", corrected_from_id),
+    )
+    venta_id = cursor.lastrowid
 
-        return {"venta_id": venta_id, "total": total,
-                "metodo_pago": venta.metodo_pago, "items": items_validados}
+    for item in items_validados:
+        conn.execute(
+            """INSERT INTO detalle_venta
+               (venta_id, producto_id, variante_id, cantidad, precio_unitario, subtotal)
+               VALUES (?,?,?,?,?,?)""",
+            (venta_id, item["producto_id"], item["variante_id"], item["cantidad"], item["precio_unitario"], item["subtotal"]),
+        )
+        _aplicar_delta_stock(conn, item["producto_id"], item["variante_id"], -item["cantidad"])
+        _validar_consistencia_stock_producto(conn, item["producto_id"])
+
+    log_transaction(conn, "sale", venta_id, "create", previous_data=None, new_data=snapshot_sale(conn, venta_id))
+    return {"venta_id": venta_id, "total": total, "metodo_pago": venta.metodo_pago, "items": items_validados}
+
+
+@app.post("/api/ventas", status_code=201)
+def registrar_venta(venta: VentaCrear):
+    with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        return _crear_venta_en_transaccion(conn, venta)
 
 
 @app.get("/api/ventas")
@@ -648,6 +702,57 @@ def historial_ventas(limite: int = 50):
             venta["created_at"] = _to_iso_dt(venta.get("created_at"))
             resultado.append({**venta, "items": [dict(d) for d in detalles]})
         return resultado
+
+
+@app.put("/api/ventas/{venta_id}/correccion")
+def corregir_venta(venta_id: int, datos: VentaCorreccion):
+    with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        venta = conn.execute("SELECT * FROM ventas WHERE id=?", (venta_id,)).fetchone()
+        if not venta:
+            raise HTTPException(404, f"Venta {venta_id} no encontrada")
+        _validar_operable_para_correccion(venta, "venta")
+
+        previa = snapshot_sale(conn, venta_id)
+        for item in previa["items"]:
+            _aplicar_delta_stock(conn, item["producto_id"], item.get("variante_id"), item["cantidad"])
+            _validar_consistencia_stock_producto(conn, item["producto_id"])
+
+        conn.execute("UPDATE ventas SET estado='cancelled' WHERE id=?", (venta_id,))
+        nueva = snapshot_sale(conn, venta_id)
+        log_transaction(conn, "sale", venta_id, "cancel", previous_data=previa, new_data=nueva)
+
+        nueva_venta = _crear_venta_en_transaccion(conn, VentaCrear(items=datos.items, metodo_pago=datos.metodo_pago), corrected_from_id=venta_id)
+        conn.execute("UPDATE ventas SET corrected_by_id=? WHERE id=?", (nueva_venta["venta_id"], venta_id))
+        log_transaction(
+            conn,
+            "sale",
+            venta_id,
+            "link_correction",
+            previous_data={"corrected_by_id": None, "original_id": venta_id},
+            new_data={"corrected_by_id": nueva_venta["venta_id"], "corrected_id": nueva_venta["venta_id"]},
+        )
+        return {"original_sale_id": venta_id, "corrected_sale_id": nueva_venta["venta_id"]}
+
+
+@app.post("/api/ventas/{venta_id}/cancelar")
+def cancelar_venta(venta_id: int):
+    with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        venta = conn.execute("SELECT * FROM ventas WHERE id=?", (venta_id,)).fetchone()
+        if not venta:
+            raise HTTPException(404, f"Venta {venta_id} no encontrada")
+        _validar_operable_para_cancelacion(venta, "venta")
+
+        previa = snapshot_sale(conn, venta_id)
+        for item in previa["items"]:
+            _aplicar_delta_stock(conn, item["producto_id"], item.get("variante_id"), item["cantidad"])
+            _validar_consistencia_stock_producto(conn, item["producto_id"])
+
+        conn.execute("UPDATE ventas SET estado='cancelled' WHERE id=?", (venta_id,))
+        nueva = snapshot_sale(conn, venta_id)
+        log_transaction(conn, "sale", venta_id, "cancel", previous_data=previa, new_data=nueva)
+        return {"venta_id": venta_id, "estado": "cancelled"}
 
 
 # ────────────────────────────────────────────
@@ -706,7 +811,7 @@ def mas_vendidos(limite: int = 10, periodo: str = "todo"):
                FROM detalle_venta d
                JOIN productos p ON d.producto_id = p.id
                JOIN ventas v ON d.venta_id = v.id
-               WHERE """ + filtros[periodo] + """
+               WHERE """ + filtros[periodo] + """ AND v.estado='active'
                GROUP BY p.id
                ORDER BY total_vendido DESC
                LIMIT ?""",
@@ -730,7 +835,7 @@ def resumen(periodo: str = "hoy"):
             f"""SELECT COUNT(*) AS total_ventas,
                        COALESCE(SUM(total),0) AS ingresos,
                        COALESCE(AVG(total),0) AS ticket_promedio
-                FROM ventas WHERE {filtros[periodo]}"""
+                FROM ventas WHERE {filtros[periodo]} AND estado='active'"""
         ).fetchone()
         alertas = conn.execute(
             "SELECT COUNT(*) AS c FROM productos WHERE activo=1 AND stock <= stock_minimo"
@@ -777,6 +882,76 @@ class CompraCrear(BaseModel):
     actualizar_costo: bool = Field(True, description="Si true, actualiza el costo del producto con el de esta compra")
 
 
+class CompraCorreccion(BaseModel):
+    proveedor: str = Field("Sin nombre", max_length=100)
+    notas: str = Field("", max_length=300)
+    costo_envio: float = Field(0, ge=0)
+    items: List[ItemCompra] = Field(..., min_items=1)
+    actualizar_costo: bool = Field(True)
+
+
+def _crear_compra_en_transaccion(conn, compra: CompraCrear, corrected_from_id: Optional[int] = None):
+    items_validados = []
+    subtotal = 0.0
+    for item in compra.items:
+        p = conn.execute(
+            "SELECT * FROM productos WHERE id=? AND activo=1", (item.producto_id,)
+        ).fetchone()
+        if not p:
+            raise HTTPException(404, f"Producto ID {item.producto_id} no existe")
+
+        if p["tiene_variantes"] and not item.variante_id:
+            raise HTTPException(400, f"'{p['nombre']}' tiene variantes. Debes seleccionar una.")
+        if item.variante_id:
+            v = conn.execute(
+                "SELECT * FROM variantes WHERE id=? AND producto_id=? AND activo=1",
+                (item.variante_id, item.producto_id),
+            ).fetchone()
+            if not v:
+                raise HTTPException(404, f"Variante {item.variante_id} no encontrada")
+
+        sub = item.costo_unitario * item.cantidad
+        subtotal += sub
+        items_validados.append(
+            {
+                "producto_id": item.producto_id,
+                "variante_id": item.variante_id,
+                "cantidad": item.cantidad,
+                "costo_unitario": item.costo_unitario,
+                "subtotal": sub,
+            }
+        )
+
+    total = subtotal + compra.costo_envio
+    cursor = conn.execute(
+        """INSERT INTO compras (proveedor, notas, subtotal, costo_envio, total, estado, corrected_from_id, corrected_by_id)
+           VALUES (?,?,?,?,?,?,?,NULL)""",
+        (compra.proveedor, compra.notas, subtotal, compra.costo_envio, total, "active", corrected_from_id),
+    )
+    compra_id = cursor.lastrowid
+    for item in items_validados:
+        conn.execute(
+            """INSERT INTO detalle_compra
+               (compra_id, producto_id, variante_id, cantidad, costo_unitario, subtotal)
+               VALUES (?,?,?,?,?,?)""",
+            (compra_id, item["producto_id"], item["variante_id"], item["cantidad"], item["costo_unitario"], item["subtotal"]),
+        )
+        _aplicar_delta_stock(conn, item["producto_id"], item["variante_id"], item["cantidad"])
+        _validar_consistencia_stock_producto(conn, item["producto_id"])
+        if compra.actualizar_costo and not item["variante_id"]:
+            conn.execute("UPDATE productos SET costo=? WHERE id=?", (item["costo_unitario"], item["producto_id"]))
+
+    log_transaction(conn, "purchase", compra_id, "create", previous_data=None, new_data=snapshot_purchase(conn, compra_id))
+    return {
+        "compra_id": compra_id,
+        "proveedor": compra.proveedor,
+        "subtotal": subtotal,
+        "costo_envio": compra.costo_envio,
+        "total": total,
+        "items": items_validados,
+    }
+
+
 @app.post("/api/compras", status_code=201)
 def registrar_compra(compra: CompraCrear):
     """
@@ -785,93 +960,8 @@ def registrar_compra(compra: CompraCrear):
     Opcionalmente actualiza el costo unitario del producto.
     """
     with get_db() as conn:
-        # Serializa escrituras durante la compra para mantener consistencia de inventario.
         conn.execute("BEGIN IMMEDIATE")
-        items_validados = []
-        subtotal = 0.0
-
-        # Fase 1: validar todos los ítems
-        for item in compra.items:
-            p = conn.execute(
-                "SELECT * FROM productos WHERE id=? AND activo=1", (item.producto_id,)
-            ).fetchone()
-            if not p:
-                raise HTTPException(404, f"Producto ID {item.producto_id} no existe")
-
-            if p["tiene_variantes"] and not item.variante_id:
-                raise HTTPException(400, f"'{p['nombre']}' tiene variantes. Debes seleccionar una.")
-
-            if item.variante_id:
-                v = conn.execute(
-                    "SELECT * FROM variantes WHERE id=? AND producto_id=? AND activo=1",
-                    (item.variante_id, item.producto_id)
-                ).fetchone()
-                if not v:
-                    raise HTTPException(404, f"Variante {item.variante_id} no encontrada")
-
-            sub = item.costo_unitario * item.cantidad
-            subtotal += sub
-            items_validados.append({
-                "producto_id": item.producto_id,
-                "variante_id": item.variante_id,
-                "cantidad": item.cantidad,
-                "costo_unitario": item.costo_unitario,
-                "subtotal": sub,
-                "nombre": p["nombre"],
-                "tiene_variantes": bool(p["tiene_variantes"]),
-            })
-
-        total = subtotal + compra.costo_envio
-
-        # Fase 2: persistir
-        cursor = conn.execute(
-            "INSERT INTO compras (proveedor, notas, subtotal, costo_envio, total) VALUES (?,?,?,?,?)",
-            (compra.proveedor, compra.notas, subtotal, compra.costo_envio, total)
-        )
-        compra_id = cursor.lastrowid
-
-        for item in items_validados:
-            conn.execute(
-                """INSERT INTO detalle_compra
-                   (compra_id, producto_id, variante_id, cantidad, costo_unitario, subtotal)
-                   VALUES (?,?,?,?,?,?)""",
-                (compra_id, item["producto_id"], item["variante_id"],
-                 item["cantidad"], item["costo_unitario"], item["subtotal"])
-            )
-
-            if item["tiene_variantes"] and item["variante_id"]:
-                conn.execute(
-                    "UPDATE variantes SET stock = stock + ? WHERE id=?",
-                    (item["cantidad"], item["variante_id"])
-                )
-                # Resincronizar stock total del producto
-                total_var = conn.execute(
-                    "SELECT COALESCE(SUM(stock),0) as t FROM variantes WHERE producto_id=? AND activo=1",
-                    (item["producto_id"],)
-                ).fetchone()["t"]
-                conn.execute("UPDATE productos SET stock=? WHERE id=?",
-                             (total_var, item["producto_id"]))
-            else:
-                conn.execute(
-                    "UPDATE productos SET stock = stock + ? WHERE id=?",
-                    (item["cantidad"], item["producto_id"])
-                )
-
-            # Actualizar costo del producto si se solicita
-            if compra.actualizar_costo and not item["variante_id"]:
-                conn.execute(
-                    "UPDATE productos SET costo=? WHERE id=?",
-                    (item["costo_unitario"], item["producto_id"])
-                )
-
-        return {
-            "compra_id": compra_id,
-            "proveedor": compra.proveedor,
-            "subtotal": subtotal,
-            "costo_envio": compra.costo_envio,
-            "total": total,
-            "items": items_validados,
-        }
+        return _crear_compra_en_transaccion(conn, compra)
 
 
 @app.get("/api/compras")
@@ -917,6 +1007,76 @@ def detalle_compra(id: int):
         return {**compra, "items": [dict(d) for d in detalles]}
 
 
+@app.put("/api/compras/{compra_id}/correccion")
+def corregir_compra(compra_id: int, datos: CompraCorreccion):
+    with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        compra = conn.execute("SELECT * FROM compras WHERE id=?", (compra_id,)).fetchone()
+        if not compra:
+            raise HTTPException(404, f"Compra {compra_id} no encontrada")
+        _validar_operable_para_correccion(compra, "compra")
+
+        previa = snapshot_purchase(conn, compra_id)
+        for item in previa["items"]:
+            _aplicar_delta_stock(conn, item["producto_id"], item.get("variante_id"), -item["cantidad"])
+            _validar_consistencia_stock_producto(conn, item["producto_id"])
+
+        conn.execute("UPDATE compras SET estado='cancelled' WHERE id=?", (compra_id,))
+        nueva = snapshot_purchase(conn, compra_id)
+        log_transaction(conn, "purchase", compra_id, "cancel", previous_data=previa, new_data=nueva)
+
+        nueva_compra = _crear_compra_en_transaccion(
+            conn,
+            CompraCrear(
+                proveedor=datos.proveedor,
+                notas=datos.notas,
+                costo_envio=datos.costo_envio,
+                items=datos.items,
+                actualizar_costo=datos.actualizar_costo,
+            ),
+            corrected_from_id=compra_id,
+        )
+        conn.execute("UPDATE compras SET corrected_by_id=? WHERE id=?", (nueva_compra["compra_id"], compra_id))
+        log_transaction(
+            conn,
+            "purchase",
+            compra_id,
+            "link_correction",
+            previous_data={"corrected_by_id": None, "original_id": compra_id},
+            new_data={"corrected_by_id": nueva_compra["compra_id"], "corrected_id": nueva_compra["compra_id"]},
+        )
+        return {"original_purchase_id": compra_id, "corrected_purchase_id": nueva_compra["compra_id"]}
+
+
+@app.post("/api/compras/{compra_id}/cancelar")
+def cancelar_compra(compra_id: int):
+    with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        compra = conn.execute("SELECT * FROM compras WHERE id=?", (compra_id,)).fetchone()
+        if not compra:
+            raise HTTPException(404, f"Compra {compra_id} no encontrada")
+        _validar_operable_para_cancelacion(compra, "compra")
+
+        previa = snapshot_purchase(conn, compra_id)
+        for item in previa["items"]:
+            _aplicar_delta_stock(conn, item["producto_id"], item.get("variante_id"), -item["cantidad"])
+            _validar_consistencia_stock_producto(conn, item["producto_id"])
+
+        conn.execute("UPDATE compras SET estado='cancelled' WHERE id=?", (compra_id,))
+        nueva = snapshot_purchase(conn, compra_id)
+        log_transaction(conn, "purchase", compra_id, "cancel", previous_data=previa, new_data=nueva)
+        return {"compra_id": compra_id, "estado": "cancelled"}
+
+
+@app.get("/api/transaction-logs")
+def historial_logs(entity_type: Optional[str] = None, entity_id: Optional[int] = None, limite: int = 100):
+    limite = max(1, min(limite, 300))
+    with get_db() as conn:
+        if entity_type and entity_type not in {"purchase", "sale"}:
+            raise HTTPException(400, "entity_type debe ser purchase o sale")
+        return list_logs(conn, entity_type=entity_type, entity_id=entity_id, limit=limite)
+
+
 # ────────────────────────────────────────────
 # SPRINT 5 — EXPORTACIÓN DE REPORTES
 # ────────────────────────────────────────────
@@ -942,7 +1102,7 @@ def exportar_reporte(periodo: str = "mes"):
             f"""SELECT COUNT(*) AS total_ventas,
                        COALESCE(SUM(total),0) AS ingresos,
                        COALESCE(AVG(total),0) AS ticket_promedio
-                FROM ventas v WHERE {filtros[periodo]}"""
+                FROM ventas v WHERE {filtros[periodo]} AND v.estado='active'"""
         ).fetchone()
 
         # Ganancia estimada
@@ -975,7 +1135,7 @@ def exportar_reporte(periodo: str = "mes"):
         # Últimas ventas
         ultimas = conn.execute(
             f"""SELECT v.id, v.total, v.metodo_pago, v.created_at
-                FROM ventas v WHERE {filtros[periodo]}
+                FROM ventas v WHERE {filtros[periodo]} AND v.estado='active'
                 ORDER BY v.created_at DESC LIMIT 20"""
         ).fetchall()
 
