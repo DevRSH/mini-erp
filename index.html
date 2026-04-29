@@ -88,6 +88,8 @@
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
       <button class="btn btn-success" onclick="navTo('ventas')">💰 Nueva venta</button>
       <button class="btn btn-primary" onclick="openModalCrearProducto()">➕ Producto</button>
+      <button class="btn btn-outline" onclick="navTo('compras')" style="grid-column:1;">🚚 Compras</button>
+      <button class="btn btn-outline" onclick="openModalBackup()" style="grid-column:2;">💾 Respaldo</button>
     </div>
     <div class="section-title">Más vendidos (mes)</div>
     <div id="dash-top-productos">
@@ -522,6 +524,37 @@
       </div>
 
       <button class="btn btn-primary" onclick="confirmarCompra()" style="margin-top:4px;">✅ Registrar compra</button>
+      <button class="btn btn-outline" onclick="cerrarModales()" style="margin-top:8px;">Cancelar</button>
+    </div>
+  </div>
+
+  <!-- ═══ MODAL: CANCELAR VENTA/COMPRA ═══ -->
+  <div class="modal-overlay" id="modal-cancelar">
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-title">⚠️ Confirmar cancelación</div>
+      <div class="alert-box danger" style="margin-bottom:16px;">
+        <span class="alert-icon">🗑️</span>
+        <span id="cancelar-mensaje">¿Cancelar esta operación? Se revertirá el stock.</span>
+      </div>
+      <input type="hidden" id="cancelar-tipo">
+      <input type="hidden" id="cancelar-id">
+      <button class="btn btn-danger" onclick="ejecutarCancelacion()">Sí, cancelar</button>
+      <button class="btn btn-outline" onclick="cerrarModales()" style="margin-top:8px;">No, volver</button>
+    </div>
+  </div>
+
+  <!-- ═══ MODAL: DESCARGAR RESPALDO ═══ -->
+  <div class="modal-overlay" id="modal-backup">
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-title">💾 Descargar respaldo</div>
+      <p style="font-size:14px;color:var(--muted);margin-bottom:16px;">Descarga una copia completa de tu base de datos. Ingresa la clave de respaldo configurada en Railway.</p>
+      <div class="form-group">
+        <label class="form-label">Clave de respaldo</label>
+        <input type="password" class="form-input" id="backup-clave" placeholder="Clave secreta...">
+      </div>
+      <button class="btn btn-primary" onclick="descargarBackup()" style="margin-top:4px;">📥 Descargar</button>
       <button class="btn btn-outline" onclick="cerrarModales()" style="margin-top:8px;">Cancelar</button>
     </div>
   </div>

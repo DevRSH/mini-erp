@@ -187,8 +187,15 @@ async function cargarCompras() {
         const etiq = i.attr2_valor ? ` (${attr1}/${attr2})` : i.attr1_valor ? ` (${attr1})` : '';
         return `${escapeHtml(i.nombre)}${etiq} ×${i.cantidad}`;
       }).join(', ');
+      const cancelada = c.estado === 'cancelled';
+      const estadoBadge = cancelada
+        ? '<span style="background:#FEE2E2;color:#991B1B;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;">❌ Cancelada</span>'
+        : '<span style="background:#DCFCE7;color:#166534;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;">✅ Activa</span>';
+      const btnCancelar = !cancelada
+        ? `<button class="btn-icon" title="Cancelar compra" onclick="openModalCancelar('compra',${c.id},'#${String(c.id).padStart(4,'0')}','${fmt(c.total)}')" style="font-size:14px;">🗑️</button>`
+        : '';
       return `
-    <div class="sale-card">
+    <div class="sale-card" style="${cancelada ? 'opacity:0.55;' : ''}">
       <div class="sale-header">
         <div>
           <div class="sale-id">#${String(c.id).padStart(4, '0')} — ${escapeHtml(c.proveedor)}</div>
@@ -201,7 +208,12 @@ async function cargarCompras() {
       </div>
       <div class="sale-items-list">📦 ${itemsTxt}</div>
       ${c.notas ? `<div style="font-size:12px;color:var(--muted);margin-top:4px;">📝 ${escapeHtml(c.notas)}</div>` : ''}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+        ${estadoBadge}
+        ${btnCancelar}
+      </div>
     </div>`;
     }).join('');
   } catch (e) { $('lista-compras').innerHTML = `<div class="alert-box danger"><span>${e.message}</span></div>`; }
 }
+

@@ -38,3 +38,26 @@ async function cargarDashboard() {
     topDiv.className = 'card';
   } catch (e) { toast('Error dashboard: ' + e.message, 'error'); }
 }
+
+// ═══════════════════════════════════════════
+// DESCARGAR RESPALDO
+// ═══════════════════════════════════════════
+function openModalBackup() {
+  $('backup-clave').value = '';
+  $('modal-backup').classList.add('open');
+}
+
+async function descargarBackup() {
+  const clave = $('backup-clave').value.trim();
+  if (!clave) { toast('Ingresa la clave de respaldo', 'error'); return; }
+  try {
+    const link = document.createElement('a');
+    link.href = `/api/backup?clave=${encodeURIComponent(clave)}`;
+    link.download = 'backup_erp.db';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast('Descarga iniciada 💾');
+    cerrarModales();
+  } catch (e) { toast(e.message, 'error'); }
+}
