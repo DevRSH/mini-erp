@@ -136,6 +136,21 @@ async def auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 # ────────────────────────────────────────────
+# LIMITADOR DE TASA (RATE LIMITING)
+# ────────────────────────────────────────────
+
+LOGIN_ATTEMPTS = {}
+
+def check_rate_limit(request: Request):
+    ip = request.client.host
+    now = time.time()
+    # Conservar solo los intentos del último minuto
+    LOGIN_ATTEMPTS[ip] = [t for t in LOGIN_ATTEMPTS.get(ip, []) if now - t < 60]
+    if len(LOGIN_ATTEMPTS[ip]) >= 5:
+        raise HTTPException(status_code=429, detail="Demasiados intentos. Espera 1 minuto.")
+    LOGIN_ATTEMPTS[ip].append(now)
+
+# ────────────────────────────────────────────
 # AUTENTICACIÓN — ENDPOINTS
 # ────────────────────────────────────────────
 
@@ -143,8 +158,9 @@ class LoginRequest(BaseModel):
     pin: str = Field(..., min_length=4, max_length=6)
 
 @app.post("/api/login")
-def login(datos: LoginRequest, response: Response):
+def login(datos: LoginRequest, response: Response, request: Request):
     """Valida el PIN y devuelve una cookie de sesión."""
+    check_rate_limit(request)
     if not secrets.compare_digest(datos.pin.strip(), APP_PIN):
         raise HTTPException(401, "PIN incorrecto")
 
@@ -174,85 +190,7 @@ def verificar_sesion(request: Request):
 # ────────────────────────────────────────────
 # SCHEMAS
 # ────────────────────────────────────────────
-
-class ProductoCrear(BaseModel):
-    nombre: str = Field(..., min_length=1, max_length=100)
-    precio: float = Field(..., ge=0)
-    costo: float = Field(0, ge=0)
-    costo_envio: float = Field(0, ge=0)
-    stock: int = Field(0, ge=0)
-    stock_minimo: int = Field(5, ge=0)
-    categoria: str = Field("General", max_length=50)
-    codigo_proveedor: str = Field("", max_length=80)
-    tiene_variantes: bool = False
-
-    @validator("nombre")
-    def nombre_no_vacio(cls, v):
-        if not v.strip():
-            raise ValueError("El nombre no puede estar vacío")
-        return v.strip()
-
-
-class ProductoEditar(BaseModel):
-    nombre: Optional[str] = Field(None, min_length=1, max_length=100)
-    precio: Optional[float] = Field(None, ge=0)
-    costo: Optional[float] = Field(None, ge=0)
-    costo_envio: Optional[float] = Field(None, ge=0)
-    stock_minimo: Optional[int] = Field(None, ge=0)
-    categoria: Optional[str] = Field(None, max_length=50)
-    codigo_proveedor: Optional[str] = Field(None, max_length=80)
-
-
-class AjusteStock(BaseModel):
-    cantidad: int
-    motivo: Optional[str] = "Ajuste manual"
-
-
-class VarianteCrear(BaseModel):
-    attr1_nombre: str = Field(..., min_length=1, max_length=40)
-    attr1_valor: str = Field(..., min_length=1, max_length=60)
-    attr2_nombre: Optional[str] = Field(None, max_length=40)
-    attr2_valor: Optional[str] = Field(None, max_length=60)
-    stock: int = Field(0, ge=0)
-    stock_minimo: int = Field(2, ge=0)
-    codigo_barras: str = Field("", max_length=80)
-
-    @validator("attr2_valor", always=True)
-    def validar_attr2(cls, v, values):
-        nombre = values.get("attr2_nombre")
-        if nombre and not v:
-            raise ValueError("Si hay nombre de atributo 2, debe tener valor")
-        if not nombre and v:
-            raise ValueError("Si hay valor de atributo 2, debe tener nombre")
-        return v
-
-
-class VarianteEditar(BaseModel):
-    attr1_valor: Optional[str] = Field(None, max_length=60)
-    attr2_valor: Optional[str] = Field(None, max_length=60)
-    stock_minimo: Optional[int] = Field(None, ge=0)
-    codigo_barras: Optional[str] = Field(None, max_length=80)
-
-
-class AjusteVariante(BaseModel):
-    cantidad: int
-    motivo: Optional[str] = "Ajuste manual"
-
-
-class ItemVenta(BaseModel):
-    producto_id: int
-    cantidad: int = Field(..., gt=0)
-    variante_id: Optional[int] = None
-
-
-class VentaCrear(BaseModel):
-    items: List[ItemVenta] = Field(..., min_items=1)
-    metodo_pago: str = Field("efectivo", pattern="^(efectivo|transferencia|tarjeta)$")
-
-
-class VentaCorreccion(BaseModel):
-    metodo_pago: str = Field("efectivo", pattern="^(efectivo|transferencia|tarjeta)$")
-    items: List[ItemVenta] = Field(..., min_items=1)
+from schemas.schemas import *
 
 
 # ── HELPER ──────────────────────────────────
@@ -878,27 +816,6 @@ def resumen(periodo: str = "hoy"):
 # ────────────────────────────────────────────
 # SPRINT 5 — COMPRAS A PROVEEDOR
 # ────────────────────────────────────────────
-
-class ItemCompra(BaseModel):
-    producto_id: int
-    variante_id: Optional[int] = None
-    cantidad: int = Field(..., gt=0)
-    costo_unitario: float = Field(..., ge=0)
-
-class CompraCrear(BaseModel):
-    proveedor: str = Field("Sin nombre", max_length=100)
-    notas: str = Field("", max_length=300)
-    costo_envio: float = Field(0, ge=0)
-    items: List[ItemCompra] = Field(..., min_items=1)
-    actualizar_costo: bool = Field(True, description="Si true, actualiza el costo del producto con el de esta compra")
-
-
-class CompraCorreccion(BaseModel):
-    proveedor: str = Field("Sin nombre", max_length=100)
-    notas: str = Field("", max_length=300)
-    costo_envio: float = Field(0, ge=0)
-    items: List[ItemCompra] = Field(..., min_items=1)
-    actualizar_costo: bool = Field(True)
 
 
 def _crear_compra_en_transaccion(conn, compra: CompraCrear, corrected_from_id: Optional[int] = None):

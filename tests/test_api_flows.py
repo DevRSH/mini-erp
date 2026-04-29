@@ -26,7 +26,7 @@ def isolated_db(tmp_path, monkeypatch):
 
 
 def fake_request(headers=None, cookies=None):
-    return SimpleNamespace(headers=headers or {}, cookies=cookies or {})
+    return SimpleNamespace(headers=headers or {}, cookies=cookies or {}, client=SimpleNamespace(host="127.0.0.1"))
 
 
 def crear_producto(nombre, precio=1000, stock=0, tiene_variantes=False, stock_minimo=5):
@@ -358,7 +358,7 @@ def test_cookie_secure_condicionada_por_flag_si_es_viable(monkeypatch):
             self.cookies = kwargs
 
     response = ResponseDummy()
-    out = main.login(main.LoginRequest(pin="1234"), response)
+    out = main.login(main.LoginRequest(pin="1234"), response, fake_request())
     assert out["mensaje"] == "Acceso concedido"
     assert response.cookies is not None
     assert response.cookies["secure"] is True
