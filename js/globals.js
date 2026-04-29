@@ -79,7 +79,7 @@ function navTo(pag) {
     inventario: cargarInventario,
     ventas: cargarProductosVenta,
     compras: cargarCompras,
-    historial: cargarHistorial,
+    timeline: cargarTimeline,
     reportes: () => cargarReportes('hoy')
   };
   if (loaders[pag]) loaders[pag]();

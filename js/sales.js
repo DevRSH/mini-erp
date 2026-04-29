@@ -116,7 +116,14 @@ function renderCarrito() {
     <div class="cart-subtotal">${fmt(sub)}</div>
   </div>`;
   }).join('');
-  $('total-venta').textContent = fmt(total);
+  
+  $('subtotal-venta').textContent = fmt(total);
+  
+  const descPct = parseFloat($('venta-desc-pct').value) || 0;
+  const descMonto = parseFloat($('venta-desc-monto').value) || 0;
+  
+  const totalConDescuento = Math.max(0, total - descMonto - (total * descPct / 100));
+  $('total-venta').textContent = fmt(totalConDescuento);
 }
 
 async function confirmarVenta() {
@@ -126,9 +133,22 @@ async function confirmarVenta() {
     variante_id: i.variante_id || null
   }));
   if (!items.length) { toast('Carrito vacío', 'error'); return; }
+  
+  const descPct = parseFloat($('venta-desc-pct').value) || 0;
+  const descMonto = parseFloat($('venta-desc-monto').value) || 0;
+  
   try {
-    const res = await api('POST', '/api/ventas', { items, metodo_pago: $('metodo-pago').value });
+    const res = await api('POST', '/api/ventas', { 
+      items, 
+      metodo_pago: $('metodo-pago').value,
+      descuento_pct: descPct,
+      descuento_monto: descMonto
+    });
     toast(`Venta #${res.venta_id} — ${fmt(res.total)} 🎉`);
-    carrito = {}; renderCarrito(); cargarProductosVenta();
+    carrito = {}; 
+    $('venta-desc-pct').value = 0;
+    $('venta-desc-monto').value = 0;
+    renderCarrito(); 
+    cargarProductosVenta();
   } catch (e) { toast(e.message, 'error'); }
 }

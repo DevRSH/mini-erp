@@ -107,6 +107,10 @@
 
   <!-- ═══ INVENTARIO ═══ -->
   <div class="page" id="page-inventario">
+    <div style="display:flex; gap:8px; margin-bottom:12px;">
+      <button class="btn btn-outline btn-sm" onclick="navTo('timeline')" style="flex:1;">⏱️ Movimientos</button>
+      <button class="btn btn-secondary btn-sm" onclick="openModalConteo()" style="flex:1;">📋 Toma Física</button>
+    </div>
     <div class="search-input-wrap">
       <span class="search-icon">🔍</span>
       <input type="text" class="form-input" id="search-productos" placeholder="Buscar producto o código..."
@@ -154,8 +158,22 @@
       <div id="carrito-items"></div>
       <div id="carrito-total" style="display:none;">
         <div class="cart-total-row">
-          <span>Total</span>
-          <span id="total-venta" style="color:var(--success);">$0</span>
+          <span>Subtotal</span>
+          <span id="subtotal-venta">$0</span>
+        </div>
+        <div class="form-row" style="margin-top:12px;">
+          <div class="form-group">
+            <label class="form-label">Desc. (%)</label>
+            <input type="number" class="form-input" id="venta-desc-pct" min="0" max="100" value="0" oninput="renderCarrito()">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Desc. ($)</label>
+            <input type="number" class="form-input" id="venta-desc-monto" min="0" value="0" oninput="renderCarrito()">
+          </div>
+        </div>
+        <div class="cart-total-row" style="margin-top:8px;">
+          <span>Total Final</span>
+          <span id="total-venta" style="color:var(--success); font-size:1.2em;">$0</span>
         </div>
         <div class="form-group" style="margin-top:12px;">
           <label class="form-label">Método de pago</label>
@@ -170,10 +188,20 @@
     </div>
   </div>
 
-  <!-- ═══ HISTORIAL ═══ -->
-  <div class="page" id="page-historial">
-    <div class="section-title">Historial de ventas</div>
-    <div id="lista-ventas">
+  <!-- ═══ TIMELINE ═══ -->
+  <div class="page" id="page-timeline">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <span class="section-title" style="margin:0;">Timeline del negocio</span>
+      <select class="form-select" id="timeline-tipo" onchange="cargarTimeline()" style="width:130px; padding:4px 8px;">
+        <option value="">Todos</option>
+        <option value="venta">💰 Ventas</option>
+        <option value="compra">🚚 Compras</option>
+        <option value="ajuste">📦 Ajustes</option>
+        <option value="merma">⚠️ Mermas</option>
+        <option value="cancelacion">❌ Canceladas</option>
+      </select>
+    </div>
+    <div id="lista-timeline">
       <div class="spinner"></div>
     </div>
   </div>
@@ -234,8 +262,8 @@
     <button class="nav-btn" onclick="navTo('inventario')" id="nav-inventario"><span
         class="icon">📦</span>Inventario</button>
     <button class="nav-btn" onclick="navTo('ventas')" id="nav-ventas"><span class="icon">💰</span>Vender</button>
-    <button class="nav-btn" onclick="navTo('historial')" id="nav-historial"><span
-        class="icon">📋</span>Historial</button>
+    <button class="nav-btn" onclick="navTo('timeline')" id="nav-timeline"><span
+        class="icon">⏳</span>Timeline</button>
     <button class="nav-btn" onclick="navTo('compras')" id="nav-compras"><span class="icon">🚚</span>Compras</button>
     <button class="nav-btn" onclick="navTo('reportes')" id="nav-reportes"><span class="icon">📊</span>Reportes</button>
   </nav>
@@ -567,14 +595,51 @@
     </div>
   </div>
 
+  <!-- ═══ MODAL: CONTEO FÍSICO ═══ -->
+  <div class="modal-overlay" id="modal-conteo">
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-title">📋 Toma de Inventario</div>
+      <div class="form-group">
+        <label class="form-label">Motivo (opcional)</label>
+        <input type="text" class="form-input" id="conteo-motivo" placeholder="Ej: Inventario mensual">
+      </div>
+      <div class="section-title">Seleccionar Productos</div>
+      <div class="search-input-wrap">
+        <span class="search-icon">🔍</span>
+        <input type="text" class="form-input" id="search-conteo-productos" placeholder="Buscar producto..." oninput="filtrarProductosConteo()">
+      </div>
+      <div class="product-select-grid" id="productos-para-conteo" style="max-height: 180px; overflow-y: auto;"></div>
+      
+      <div class="section-title">Items a Contar</div>
+      <div class="card" id="lista-items-conteo">
+        <div class="empty-state" style="padding:16px 0;" id="conteo-vacio">
+          <p>Selecciona productos arriba</p>
+        </div>
+        <div id="conteo-items"></div>
+      </div>
+      
+      <div class="card" id="conteo-resumen" style="display:none; margin-top:12px; background:#F7F5F0;">
+        <div style="font-weight: 600; text-align: center; color: var(--primary);" id="conteo-diferencias-txt"></div>
+      </div>
+
+      <div style="display:flex; gap:8px; margin-top:12px;">
+        <button class="btn btn-secondary" onclick="compararConteo()" style="flex:1;">🔄 Comparar</button>
+        <button class="btn btn-primary" onclick="confirmarConteoFisico()" style="flex:1;" id="btn-confirmar-conteo" disabled>✅ Confirmar</button>
+      </div>
+      <button class="btn btn-outline" onclick="cerrarModales()" style="margin-top:8px;">Cancelar</button>
+    </div>
+  </div>
+
   <!-- Scripts Modulares (orden: dependencias → consumidores) -->
   <script src="js/globals.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/dashboard.js"></script>
   <script src="js/inventory.js"></script>
+  <script src="js/inventory_moves.js"></script>
   <script src="js/scanner.js"></script>
   <script src="js/sales.js"></script>
-  <script src="js/history.js"></script>
+  <script src="js/timeline.js"></script>
   <script src="js/reports.js"></script>
   <script src="js/purchases.js"></script>
   <script src="js/main.js"></script>
