@@ -104,6 +104,12 @@ async def auth_middleware(request: Request, call_next):
 from routers.auth import router as auth_router
 app.include_router(auth_router)
 
+from routers.products import router as products_router
+app.include_router(products_router)
+
+from routers.sales import router as sales_router
+app.include_router(sales_router)
+
 # ────────────────────────────────────────────
 # SPRINT 3 — REPORTES
 # ────────────────────────────────────────────
