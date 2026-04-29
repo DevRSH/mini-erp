@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, Response as FastResponse, FileRespon
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List
-from database import init_db, init_compras, get_db
+from database import init_db, init_compras, init_inventory, get_db
 from audit_service import log_transaction, snapshot_sale, snapshot_purchase, list_logs
 import os
 import secrets
@@ -33,9 +33,10 @@ RUTAS_PUBLICAS = {"/", "/login", "/manifest.json",
 async def lifespan(app: FastAPI):
     init_db()
     init_compras()
+    init_inventory()
     yield
 
-app = FastAPI(title="Fika", version="3.0.0", lifespan=lifespan)
+app = FastAPI(title="NESKO", version="4.0.0", lifespan=lifespan)
 
 app.mount("/css", StaticFiles(directory="css"), name="css")
 app.mount("/js", StaticFiles(directory="js"), name="js")
@@ -116,6 +117,15 @@ app.include_router(reports_router)
 # ────────────────────────────────────────────
 from routers.purchases import router as purchases_router
 app.include_router(purchases_router)
+
+# ────────────────────────────────────────────
+# NIVEL 1 — INVENTARIO Y TIMELINE
+# ────────────────────────────────────────────
+from routers.inventory import router as inventory_router
+app.include_router(inventory_router)
+
+from routers.timeline import router as timeline_router
+app.include_router(timeline_router)
 
 
 @app.get("/api/transaction-logs")

@@ -22,9 +22,9 @@ def isolated_db(tmp_path, monkeypatch):
     db_path = tmp_path / "erp_test.db"
     monkeypatch.setenv("DB_PATH", str(db_path))
     database.DB_PATH = str(db_path)
-    main.DB_PATH = str(db_path)
     database.init_db()
     database.init_compras()
+    database.init_inventory()
     yield
 
 

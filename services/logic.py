@@ -3,6 +3,7 @@ from fastapi import HTTPException
 from database import get_db
 from audit_service import log_transaction, snapshot_sale, snapshot_purchase
 from schemas.schemas import VentaCrear, CompraCrear
+from services.inventory import registrar_movimiento, obtener_stock_actual
 
 def _margen(precio, costo, costo_envio):
     costo_real = (costo or 0) + (costo_envio or 0)
@@ -95,8 +96,9 @@ def _validar_operable_para_correccion(row, etiqueta: str):
 
 def _crear_venta_en_transaccion(conn, venta: VentaCrear, corrected_from_id: Optional[int] = None):
     items_validados = []
-    total = 0.0
+    subtotal_bruto = 0.0
     productos_tocados = set()
+    movement_items = []
 
     for item in venta.items:
         p = conn.execute(
@@ -119,9 +121,14 @@ def _crear_venta_en_transaccion(conn, venta: VentaCrear, corrected_from_id: Opti
         elif p["stock"] < item.cantidad:
             raise HTTPException(400, f"Stock insuficiente para producto {item.producto_id}")
 
-        subtotal = p["precio"] * item.cantidad
-        total += subtotal
+        desc_item = getattr(item, 'descuento_item', 0) or 0
+        subtotal = (p["precio"] * item.cantidad) - desc_item
+        subtotal_bruto += p["precio"] * item.cantidad
         productos_tocados.add(item.producto_id)
+
+        # Capturar stock antes del cambio
+        stock_antes = obtener_stock_actual(conn, item.producto_id, item.variante_id)
+
         items_validados.append({
             "producto_id": item.producto_id,
             "variante_id": item.variante_id,
@@ -129,32 +136,62 @@ def _crear_venta_en_transaccion(conn, venta: VentaCrear, corrected_from_id: Opti
             "cantidad": item.cantidad,
             "precio_unitario": p["precio"],
             "subtotal": subtotal,
+            "descuento_item": desc_item,
             "tiene_variantes": bool(p["tiene_variantes"]),
+            "stock_antes": stock_antes,
         })
 
+    # Calcular descuentos globales
+    desc_pct = getattr(venta, 'descuento_pct', 0) or 0
+    desc_monto = getattr(venta, 'descuento_monto', 0) or 0
+    total_items_desc = sum(i["descuento_item"] for i in items_validados)
+    subtotal_neto = subtotal_bruto - total_items_desc
+    descuento_global = desc_monto + (subtotal_neto * desc_pct / 100)
+    total = max(0, subtotal_neto - descuento_global)
+
     cursor = conn.execute(
-        """INSERT INTO ventas (total, metodo_pago, estado, corrected_from_id, corrected_by_id)
-           VALUES (?,?,?,?,NULL)""",
-        (total, venta.metodo_pago, "active", corrected_from_id),
+        """INSERT INTO ventas (subtotal, total, descuento_pct, descuento_monto,
+           metodo_pago, estado, corrected_from_id, corrected_by_id)
+           VALUES (?,?,?,?,?,?,?,NULL)""",
+        (subtotal_bruto, total, desc_pct, desc_monto, venta.metodo_pago, "active", corrected_from_id),
     )
     venta_id = cursor.lastrowid
 
     for item in items_validados:
         conn.execute(
             """INSERT INTO detalle_venta
-               (venta_id, producto_id, variante_id, cantidad, precio_unitario, subtotal)
-               VALUES (?,?,?,?,?,?)""",
-            (venta_id, item["producto_id"], item["variante_id"], item["cantidad"], item["precio_unitario"], item["subtotal"]),
+               (venta_id, producto_id, variante_id, cantidad, precio_unitario, subtotal, descuento_item)
+               VALUES (?,?,?,?,?,?,?)""",
+            (venta_id, item["producto_id"], item["variante_id"], item["cantidad"],
+             item["precio_unitario"], item["subtotal"], item["descuento_item"]),
         )
         _aplicar_delta_stock(conn, item["producto_id"], item["variante_id"], -item["cantidad"])
         _validar_consistencia_stock_producto(conn, item["producto_id"])
 
+        stock_despues = obtener_stock_actual(conn, item["producto_id"], item["variante_id"])
+        movement_items.append({
+            "producto_id": item["producto_id"],
+            "variante_id": item["variante_id"],
+            "cantidad": -item["cantidad"],
+            "stock_antes": item["stock_antes"],
+            "stock_despues": stock_despues,
+        })
+
+    # Registrar movimiento de inventario
+    registrar_movimiento(
+        conn, "venta", f"Venta #{venta_id}", movement_items,
+        referencia=f"venta:{venta_id}",
+    )
+
     log_transaction(conn, "sale", venta_id, "create", previous_data=None, new_data=snapshot_sale(conn, venta_id))
-    return {"venta_id": venta_id, "total": total, "metodo_pago": venta.metodo_pago, "items": items_validados}
+    return {"venta_id": venta_id, "subtotal": subtotal_bruto, "total": total,
+            "descuento_pct": desc_pct, "descuento_monto": desc_monto,
+            "metodo_pago": venta.metodo_pago, "items": items_validados}
 
 def _crear_compra_en_transaccion(conn, compra: CompraCrear, corrected_from_id: Optional[int] = None):
     items_validados = []
     subtotal = 0.0
+    movement_items = []
 
     for item in compra.items:
         p = conn.execute("SELECT * FROM productos WHERE id=? AND activo=1", (item.producto_id,)).fetchone()
@@ -175,6 +212,8 @@ def _crear_compra_en_transaccion(conn, compra: CompraCrear, corrected_from_id: O
             if not v:
                 raise HTTPException(404, f"Variante {item.variante_id} no encontrada")
 
+        stock_antes = obtener_stock_actual(conn, item.producto_id, item.variante_id)
+
         sub = item.costo_unitario * item.cantidad
         subtotal += sub
         items_validados.append({
@@ -183,6 +222,7 @@ def _crear_compra_en_transaccion(conn, compra: CompraCrear, corrected_from_id: O
             "cantidad": item.cantidad,
             "costo_unitario": item.costo_unitario,
             "subtotal": sub,
+            "stock_antes": stock_antes,
         })
 
     total = subtotal + compra.costo_envio
@@ -203,6 +243,21 @@ def _crear_compra_en_transaccion(conn, compra: CompraCrear, corrected_from_id: O
         _validar_consistencia_stock_producto(conn, item["producto_id"])
         if compra.actualizar_costo and not item["variante_id"]:
             conn.execute("UPDATE productos SET costo=? WHERE id=?", (item["costo_unitario"], item["producto_id"]))
+
+        stock_despues = obtener_stock_actual(conn, item["producto_id"], item["variante_id"])
+        movement_items.append({
+            "producto_id": item["producto_id"],
+            "variante_id": item["variante_id"],
+            "cantidad": item["cantidad"],
+            "stock_antes": item["stock_antes"],
+            "stock_despues": stock_despues,
+        })
+
+    # Registrar movimiento de inventario
+    registrar_movimiento(
+        conn, "compra", f"Compra #{compra_id} — {compra.proveedor}", movement_items,
+        referencia=f"compra:{compra_id}",
+    )
 
     log_transaction(conn, "purchase", compra_id, "create", previous_data=None, new_data=snapshot_purchase(conn, compra_id))
     return {

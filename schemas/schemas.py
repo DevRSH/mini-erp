@@ -1,5 +1,5 @@
 from typing import List, Optional
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 class LoginRequest(BaseModel):
     pin: str = Field(..., min_length=4, max_length=6)
@@ -15,7 +15,8 @@ class ProductoCrear(BaseModel):
     codigo_proveedor: str = Field("", max_length=80)
     tiene_variantes: bool = False
 
-    @validator("nombre")
+    @field_validator("nombre")
+    @classmethod
     def nombre_no_vacio(cls, v):
         if not v.strip():
             raise ValueError("El nombre no puede estar vacío")
@@ -43,9 +44,10 @@ class VarianteCrear(BaseModel):
     stock_minimo: int = Field(2, ge=0)
     codigo_barras: str = Field("", max_length=80)
 
-    @validator("attr2_valor", always=True)
-    def validar_attr2(cls, v, values):
-        nombre = values.get("attr2_nombre")
+    @field_validator("attr2_valor")
+    @classmethod
+    def validar_attr2(cls, v, info):
+        nombre = info.data.get("attr2_nombre")
         if nombre and not v:
             raise ValueError("Si hay nombre de atributo 2, debe tener valor")
         if not nombre and v:
@@ -66,10 +68,13 @@ class ItemVenta(BaseModel):
     producto_id: int
     cantidad: int = Field(..., gt=0)
     variante_id: Optional[int] = None
+    descuento_item: float = Field(0, ge=0, description="Descuento en $ aplicado a este item")
 
 class VentaCrear(BaseModel):
     items: List[ItemVenta] = Field(..., min_length=1)
     metodo_pago: str = Field("efectivo", pattern="^(efectivo|transferencia|tarjeta)$")
+    descuento_pct: float = Field(0, ge=0, le=100, description="Descuento porcentual sobre subtotal")
+    descuento_monto: float = Field(0, ge=0, description="Descuento fijo en $ sobre subtotal")
 
 class VentaCorreccion(BaseModel):
     metodo_pago: str = Field("efectivo", pattern="^(efectivo|transferencia|tarjeta)$")
@@ -94,3 +99,14 @@ class CompraCorreccion(BaseModel):
     costo_envio: float = Field(0, ge=0)
     items: List[ItemCompra] = Field(..., min_length=1)
     actualizar_costo: bool = Field(True)
+
+# ── Conteo Físico de Inventario ──
+
+class ItemConteo(BaseModel):
+    producto_id: int
+    variante_id: Optional[int] = None
+    cantidad_fisica: int = Field(..., ge=0)
+
+class ConteoFisico(BaseModel):
+    items: List[ItemConteo] = Field(..., min_length=1)
+    motivo: str = Field("Toma de inventario físico", max_length=200)

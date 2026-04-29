@@ -218,3 +218,48 @@ def init_compras():
                     CREATE INDEX IF NOT EXISTS idx_transaction_logs_entity
                         ON transaction_logs(entity_type, entity_id, timestamp DESC);
                 """)
+
+
+def init_inventory():
+    """Migración: tablas de movimientos de inventario + columnas de descuento."""
+    with get_db() as conn:
+        # ── Movimientos de inventario ──
+        if not _tabla_existe(conn, "inventory_movements"):
+            conn.executescript("""
+                CREATE TABLE inventory_movements (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tipo        TEXT    NOT NULL CHECK(tipo IN ('venta','compra','ajuste','merma','cancelacion')),
+                    referencia  TEXT,
+                    motivo      TEXT    NOT NULL,
+                    created_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+                );
+
+                CREATE TABLE inventory_movement_items (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    movimiento_id   INTEGER NOT NULL REFERENCES inventory_movements(id),
+                    producto_id     INTEGER NOT NULL REFERENCES productos(id),
+                    variante_id     INTEGER REFERENCES variantes(id),
+                    cantidad        INTEGER NOT NULL,
+                    stock_antes     INTEGER NOT NULL,
+                    stock_despues   INTEGER NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_inv_mov_tipo   ON inventory_movements(tipo);
+                CREATE INDEX IF NOT EXISTS idx_inv_mov_fecha  ON inventory_movements(created_at);
+                CREATE INDEX IF NOT EXISTS idx_inv_mov_ref    ON inventory_movements(referencia);
+                CREATE INDEX IF NOT EXISTS idx_inv_items_mov  ON inventory_movement_items(movimiento_id);
+                CREATE INDEX IF NOT EXISTS idx_inv_items_prod ON inventory_movement_items(producto_id);
+            """)
+
+        # ── Descuentos en ventas ──
+        ventas_cols = _columnas_existentes(conn, "ventas")
+        if "descuento_pct" not in ventas_cols:
+            conn.execute("ALTER TABLE ventas ADD COLUMN descuento_pct REAL NOT NULL DEFAULT 0")
+        if "descuento_monto" not in ventas_cols:
+            conn.execute("ALTER TABLE ventas ADD COLUMN descuento_monto REAL NOT NULL DEFAULT 0")
+        if "subtotal" not in ventas_cols:
+            conn.execute("ALTER TABLE ventas ADD COLUMN subtotal REAL NOT NULL DEFAULT 0")
+
+        dv_cols = _columnas_existentes(conn, "detalle_venta")
+        if "descuento_item" not in dv_cols:
+            conn.execute("ALTER TABLE detalle_venta ADD COLUMN descuento_item REAL NOT NULL DEFAULT 0")
