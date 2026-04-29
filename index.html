@@ -246,10 +246,19 @@
         <div class="stat-label">Ticket prom.</div>
       </div>
     </div>
-    <button class="btn btn-outline" id="btn-exportar" onclick="exportarReporte()" style="margin-bottom:14px;">
-      📤 Exportar reporte para compartir
-    </button>
-    <div class="section-title" style="margin-top:0;">⚠️ Stock bajo</div>
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:14px;">
+      <button class="btn btn-outline btn-sm" id="btn-exportar" onclick="exportarReporte()">📄 Reporte Hoy</button>
+      <button class="btn btn-outline btn-sm" onclick="exportarTodoCSV()" style="background:var(--success); color:white; border:none;">📊 Exportar CSV</button>
+    </div>
+    <div class="section-title" style="margin-top:0;">💡 Sugerencias de Abastecimiento</div>
+    <div id="reporte-proyeccion" style="margin-bottom:20px;">
+      <div class="spinner"></div>
+    </div>
+    <div class="section-title">📈 Rentabilidad por Categoría</div>
+    <div id="reporte-margenes" style="margin-bottom:20px;">
+      <div class="spinner"></div>
+    </div>
+    <div class="section-title">⚠️ Stock bajo</div>
     <div id="reporte-stock-bajo">
       <div class="spinner"></div>
     </div>

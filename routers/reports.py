@@ -152,4 +152,104 @@ def productos_sin_movimiento(dias: int = 30):
                 d["ultimo_movimiento"] = "Nunca"
             resultado.append(d)
         return resultado
+        return resultado
 
+
+@router.get("/api/reportes/proyeccion-compras")
+def proyeccion_compras(dias_historial: int = 30):
+    """
+    Sugerencia inteligente de compras basada en Venta Promedio Diaria (VPD).
+    """
+    with get_db() as conn:
+        # 1. Calcular VPD (Venta Promedio Diaria) por producto
+        # Dividimos por dias_historial para sacar el promedio diario
+        vpd_query = f"""
+            SELECT producto_id, SUM(cantidad) as total_vendido
+            FROM detalle_venta dv
+            JOIN ventas v ON dv.venta_id = v.id
+            WHERE v.estado = 'active' 
+              AND v.created_at >= date('now', '-{dias_historial} days', 'localtime')
+            GROUP BY producto_id
+        """
+        ventas = {r["producto_id"]: r["total_vendido"] / dias_historial for r in conn.execute(vpd_query).fetchall()}
+
+        # 2. Obtener productos activos
+        productos = conn.execute(
+            "SELECT id, nombre, stock, stock_minimo, categoria FROM productos WHERE activo=1"
+        ).fetchall()
+
+        sugerencias = []
+        for p in productos:
+            vpd = ventas.get(p["id"], 0)
+            dias_cobertura = (p["stock"] / vpd) if vpd > 0 else 999
+            
+            # Criterio: Cobertura < 7 días O stock < mínimo
+            if dias_cobertura < 7 or p["stock"] <= p["stock_minimo"]:
+                # Sugerimos comprar para cubrir 15 días + stock mínimo
+                cantidad_sugerida = max(0, (vpd * 15) + p["stock_minimo"] - p["stock"])
+                if cantidad_sugerida > 0:
+                    sugerencias.append({
+                        "id": p["id"],
+                        "nombre": p["nombre"],
+                        "categoria": p["categoria"],
+                        "stock_actual": p["stock"],
+                        "stock_minimo": p["stock_minimo"],
+                        "venta_diaria_promedio": round(vpd, 2),
+                        "dias_cobertura_restante": round(dias_cobertura, 1) if vpd > 0 else "∞",
+                        "cantidad_sugerida": int(cantidad_sugerida + 0.99) # Redondear hacia arriba
+                    })
+        
+        sugerencias.sort(key=lambda x: x["dias_cobertura_restante"] if isinstance(x["dias_cobertura_restante"], (int, float)) else 999)
+        return sugerencias
+
+
+@router.get("/api/reportes/margenes-categoria")
+def margenes_por_categoria():
+    """Análisis de rentabilidad agrupado por categoría."""
+    with get_db() as conn:
+        query = """
+            SELECT p.categoria,
+                   SUM(d.subtotal) AS ingresos,
+                   SUM(d.cantidad * (p.costo + COALESCE(p.costo_envio,0))) AS costos,
+                   SUM(d.subtotal - (d.cantidad * (p.costo + COALESCE(p.costo_envio,0)))) AS ganancia
+            FROM detalle_venta d
+            JOIN productos p ON d.producto_id = p.id
+            JOIN ventas v ON d.venta_id = v.id
+            WHERE v.estado = 'active'
+            GROUP BY p.categoria
+            ORDER BY ganancia DESC
+        """
+        rows = conn.execute(query).fetchall()
+        resultado = []
+        for r in rows:
+            d = dict(r)
+            d["margen_pct"] = round((d["ganancia"] / d["ingresos"] * 100), 1) if d["ingresos"] > 0 else 0
+            resultado.append(d)
+        return resultado
+
+
+@router.get("/api/reportes/exportar-full")
+def exportar_full():
+    """Genera un volcado completo de movimientos e inventario para CSV."""
+    with get_db() as conn:
+        # Movimientos detallados
+        movs = conn.execute("""
+            SELECT m.id, m.tipo, m.motivo, m.created_at,
+                   p.nombre as producto, p.categoria,
+                   mi.cantidad, mi.stock_antes, mi.stock_despues
+            FROM inventory_movements m
+            JOIN inventory_movement_items mi ON mi.movimiento_id = m.id
+            JOIN productos p ON mi.producto_id = p.id
+            ORDER BY m.created_at DESC
+        """).fetchall()
+        
+        # Inventario actual
+        inv = conn.execute("""
+            SELECT id, nombre, categoria, stock, costo, precio, stock_minimo
+            FROM productos WHERE activo=1
+        """).fetchall()
+        
+        return {
+            "movimientos": [dict(m) for m in movs],
+            "inventario": [dict(i) for i in inv]
+        }
