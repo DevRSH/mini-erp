@@ -5,14 +5,18 @@ from dependencies import (
     APP_PIN, SESSION_HOURS, COOKIE_HTTPONLY, COOKIE_SAMESITE, COOKIE_SECURE,
     _generar_token, _validar_token, check_rate_limit
 )
+from logger import log
 
 router = APIRouter(prefix="/api", tags=["Autenticación"])
 
 @router.post("/login")
 def login(datos: LoginRequest, response: Response, request: Request):
-    """Valida el PIN y devuelve una cookie de sesión."""
+    """Valida el PIN y devuelve una cookie de sesión con JWT."""
     check_rate_limit(request)
+    ip = request.client.host if request.client else "unknown"
+
     if not secrets.compare_digest(datos.pin.strip(), APP_PIN):
+        log.warning("Login fallido — IP: %s", ip)
         raise HTTPException(401, "PIN incorrecto")
 
     token = _generar_token(datos.pin)
@@ -24,11 +28,13 @@ def login(datos: LoginRequest, response: Response, request: Request):
         samesite=COOKIE_SAMESITE,
         secure=COOKIE_SECURE,
     )
+    log.info("Login exitoso — IP: %s", ip)
     return {"mensaje": "Acceso concedido", "horas": SESSION_HOURS}
 
 @router.post("/logout")
 def logout(response: Response):
     response.delete_cookie("erp_session")
+    log.info("Sesión cerrada")
     return {"mensaje": "Sesión cerrada"}
 
 @router.get("/sesion")

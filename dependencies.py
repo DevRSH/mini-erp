@@ -1,55 +1,67 @@
-import os
+"""
+dependencies.py — Autenticación JWT y utilidades de seguridad
+"""
+
 import time
 import hashlib
 import secrets
+from datetime import datetime, timedelta, timezone
+
 from fastapi import Request, HTTPException
+from jose import jwt, JWTError
+
+from config import settings
+from logger import log
+
 
 # ────────────────────────────────────────────
-# CONFIGURACIÓN Y CONSTANTES
+# CONSTANTES (leídas de Settings para retrocompatibilidad)
 # ────────────────────────────────────────────
-APP_PIN = os.environ.get("APP_PIN", "1234")
-BACKUP_KEY = os.environ.get("BACKUP_KEY", "")
-SESSION_HOURS = int(os.environ.get("SESSION_HOURS", "24"))
-SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key-12345")
-COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
-COOKIE_HTTPONLY = os.environ.get("COOKIE_HTTPONLY", "true").lower() == "true"
-COOKIE_SAMESITE = os.environ.get("COOKIE_SAMESITE", "lax")
+APP_PIN = settings.app_pin
+BACKUP_KEY = settings.backup_key
+SESSION_HOURS = settings.session_hours
+SECRET_KEY = settings.secret_key
+COOKIE_SECURE = settings.cookie_secure
+COOKIE_HTTPONLY = settings.cookie_httponly
+COOKIE_SAMESITE = settings.cookie_samesite
+
 
 # ────────────────────────────────────────────
-# AUTENTICACIÓN
+# AUTENTICACIÓN JWT
 # ────────────────────────────────────────────
 
 def _hash_pin(pin: str) -> str:
     return hashlib.sha256(pin.encode()).hexdigest()
 
+
 def _generar_token(pin: str) -> str:
-    """Token = hash(pin) + timestamp de expiración."""
-    expira = int(time.time()) + SESSION_HOURS * 3600
-    raw = f"{_hash_pin(pin)}:{expira}"
-    firma = hashlib.sha256(f"{SECRET_KEY}{raw}".encode()).hexdigest()
-    return f"{raw}:{firma}"
+    """Genera un JWT firmado con HS256."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": _hash_pin(pin),
+        "iat": now,
+        "exp": now + timedelta(hours=SESSION_HOURS),
+    }
+    token = jwt.encode(payload, SECRET_KEY, algorithm=settings.jwt_algorithm)
+    log.info("JWT generado — expira en %dh", SESSION_HOURS)
+    return token
+
 
 def _validar_token(token: str) -> bool:
-    """Verifica que el token es auténtico y no expiró."""
+    """Verifica que el JWT es auténtico y no ha expirado."""
     try:
-        partes = token.split(":")
-        if len(partes) != 3:
-            return False
-        raw = f"{partes[0]}:{partes[1]}"
-        firma = partes[2]
-        firma_esperada = hashlib.sha256(f"{SECRET_KEY}{raw}".encode()).hexdigest()
-        if not secrets.compare_digest(firma, firma_esperada):
-            return False
-        if int(partes[1]) < time.time():
-            return False
+        jwt.decode(token, SECRET_KEY, algorithms=[settings.jwt_algorithm])
         return True
-    except Exception:
+    except JWTError as e:
+        log.debug("JWT inválido: %s", e)
         return False
+
 
 # ────────────────────────────────────────────
 # LIMITADOR DE TASA (RATE LIMITING)
 # ────────────────────────────────────────────
-LOGIN_ATTEMPTS = {}
+LOGIN_ATTEMPTS: dict[str, list[float]] = {}
+
 
 def check_rate_limit(request: Request):
     ip = request.client.host if request.client else "127.0.0.1"
@@ -57,5 +69,6 @@ def check_rate_limit(request: Request):
     # Conservar solo los intentos del último minuto
     LOGIN_ATTEMPTS[ip] = [t for t in LOGIN_ATTEMPTS.get(ip, []) if now - t < 60]
     if len(LOGIN_ATTEMPTS[ip]) >= 5:
+        log.warning("Rate limit excedido — IP: %s", ip)
         raise HTTPException(status_code=429, detail="Demasiados intentos. Espera 1 minuto.")
     LOGIN_ATTEMPTS[ip].append(now)

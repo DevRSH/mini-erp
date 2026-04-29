@@ -1,6 +1,6 @@
 """
 main.py — Mini ERP | FastAPI Backend
-Sprint 7: Autenticación PIN, backup protegido, lifespan moderno
+Sprint 8: JWT, Pydantic Settings, Logging estructurado
 """
 
 from contextlib import asynccontextmanager
@@ -8,24 +8,17 @@ from fastapi import FastAPI, HTTPException, Request, Response, Cookie
 from fastapi.responses import HTMLResponse, Response as FastResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, validator
 from typing import Optional, List
-from database import init_db, init_compras, get_db, DB_PATH
+from database import init_db, init_compras, get_db
 from audit_service import log_transaction, snapshot_sale, snapshot_purchase, list_logs
 import os
-import hashlib
 import secrets
-import time
 import sqlite3
 
-# ────────────────────────────────────────────
-# CONFIGURACIÓN DE SEGURIDAD
-# ────────────────────────────────────────────
-
+from config import settings
+from logger import log
 from dependencies import (
-    APP_PIN, BACKUP_KEY, SESSION_HOURS, SECRET_KEY,
-    COOKIE_SECURE, COOKIE_HTTPONLY, COOKIE_SAMESITE,
-    _hash_pin, _generar_token, _validar_token, check_rate_limit
+    BACKUP_KEY, _validar_token
 )
 
 # Rutas que no requieren autenticación
@@ -51,7 +44,8 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 
 @app.exception_handler(sqlite3.IntegrityError)
-async def sqlite_integrity_error_handler(_: Request, __: sqlite3.IntegrityError):
+async def sqlite_integrity_error_handler(request: Request, exc: sqlite3.IntegrityError):
+    log.error("IntegrityError en %s: %s", request.url.path, exc)
     return JSONResponse(
         {"detail": "Conflicto de integridad de datos"},
         status_code=409,
@@ -59,13 +53,14 @@ async def sqlite_integrity_error_handler(_: Request, __: sqlite3.IntegrityError)
 
 
 @app.exception_handler(sqlite3.OperationalError)
-async def sqlite_operational_error_handler(_: Request, exc: sqlite3.OperationalError):
+async def sqlite_operational_error_handler(request: Request, exc: sqlite3.OperationalError):
     detail = "Error operativo de base de datos"
     status = 500
     mensaje = str(exc).lower()
     if "locked" in mensaje or "busy" in mensaje:
         detail = "Base de datos ocupada temporalmente, reintenta"
         status = 503
+    log.error("OperationalError en %s [%d]: %s", request.url.path, status, exc)
     return JSONResponse({"detail": detail}, status_code=status)
 
 # ────────────────────────────────────────────
@@ -350,14 +345,18 @@ def descargar_backup(request: Request, clave: str = ""):
     clave_header = request.headers.get("X-Backup-Key", "")
     clave_efectiva = clave_header or clave
     if not secrets.compare_digest(clave_efectiva, BACKUP_KEY):
+        ip = request.client.host if request.client else "unknown"
+        log.warning("Backup fallido — clave incorrecta — IP: %s", ip)
         raise HTTPException(403, "Clave incorrecta")
-    if not os.path.exists(DB_PATH):
+    db_path = settings.db_path
+    if not os.path.exists(db_path):
         raise HTTPException(404, "Base de datos no encontrada")
 
     from datetime import datetime
     fecha = datetime.now().strftime("%Y%m%d_%H%M")
+    log.info("Backup descargado")
     return FileResponse(
-        DB_PATH,
+        db_path,
         media_type="application/octet-stream",
         filename=f"backup_erp_{fecha}.db"
     )
