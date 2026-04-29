@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, Response, Cookie
 from fastapi.responses import HTMLResponse, Response as FastResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, validator
 from typing import Optional, List
 from database import init_db, init_compras, get_db, DB_PATH
@@ -83,6 +84,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Fika", version="3.0.0", lifespan=lifespan)
 
+app.mount("/css", StaticFiles(directory="css"), name="css")
+app.mount("/js", StaticFiles(directory="js"), name="js")
+
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -113,7 +117,7 @@ async def auth_middleware(request: Request, call_next):
     path = request.url.path
 
     # Rutas públicas pasan sin verificar
-    if path in RUTAS_PUBLICAS:
+    if path in RUTAS_PUBLICAS or path.startswith("/css/") or path.startswith("/js/"):
         return await call_next(request)
 
     # Endpoints públicos API que no requieren sesión previa
