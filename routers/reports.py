@@ -103,3 +103,21 @@ def resumen(periodo: str = "hoy"):
             "total_productos_activos": total_p["c"],
             "ganancia_estimada": round(ganancia["ganancia_estimada"], 0),
         }
+
+@router.get("/api/reportes/ventas-diarias")
+def ventas_diarias(dias: int = 7):
+    """Retorna ventas e ingresos agrupados por día para gráficas."""
+    dias = max(1, min(dias, 30))
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT date(created_at, 'localtime') AS fecha,
+                      COUNT(*) AS total_ventas,
+                      COALESCE(SUM(total), 0) AS ingresos
+               FROM ventas
+               WHERE created_at >= date('now', ? || ' days', 'localtime')
+                 AND estado = 'active'
+               GROUP BY fecha
+               ORDER BY fecha""",
+            (f"-{dias}",)
+        ).fetchall()
+        return [dict(r) for r in rows]
