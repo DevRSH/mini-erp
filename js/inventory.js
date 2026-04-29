@@ -1,3 +1,67 @@
+    // ═══════════════════════════════════════════
+    // INVENTARIO
+    // ═══════════════════════════════════════════
+    const ICONOS = ['🥤', '🎩', '👕', '👟', '🍫', '🍬', '🧴', '📦', '🧃', '☕', '🫙', '🍭', '🧤', '🧣'];
+
+    async function cargarInventario() {
+      $('lista-productos').innerHTML = '<div class="spinner"></div>';
+      try {
+        todosProductos = await api('GET', '/api/products');
+        renderInventario(todosProductos);
+        actualizarDatalistCategorias();
+      } catch (e) { $('lista-productos').innerHTML = `<div class="alert-box danger"><span>${e.message}</span></div>`; }
+    }
+
+    function renderInventario(lista) {
+      const cont = $('lista-productos');
+      $('productos-count').textContent = `${lista.length} producto${lista.length !== 1 ? 's' : ''}`;
+      if (!lista.length) { cont.innerHTML = '<div class="empty-state"><div class="empty-icon">📦</div><p>Sin productos.</p></div>'; return; }
+      cont.innerHTML = lista.map(p => {
+        const sc = p.stock === 0 ? 'no-stock' : p.stock_bajo ? 'low-stock' : '';
+        const sb = p.stock === 0 ? 'stock-bad' : p.stock_bajo ? 'stock-warn' : 'stock-ok';
+        const st = p.stock === 0 ? '⛔ Agotado' : p.stock_bajo ? `⚠️ ${p.stock} uds` : `✅ ${p.stock} uds`;
+        const ic = ICONOS[p.id % ICONOS.length];
+        const mc = marginClass(p.margen_pct || 0);
+        const mg = p.costo > 0 ? `<div class="product-margin ${mc}">Margen: ${p.margen_pct}%</div>` : '';
+        const cv = p.tiene_variantes ? `<span class="variante-badge">Con variantes</span>` : '';
+        const cod = p.codigo_proveedor ? `<div class="product-cod">🏷️ ${escapeHtml(p.codigo_proveedor)}</div>` : '';
+        return `
+      <div class="product-card ${sc}">
+        <div class="product-icon">${ic}</div>
+        <div class="product-info">
+          <div class="product-name">${escapeHtml(p.nombre)}</div>
+          <div class="product-cat">${escapeHtml(p.categoria)}</div>
+          ${cod}${cv}
+        </div>
+        <div class="product-meta">
+          <div class="product-price">${fmt(p.precio)}</div>
+          ${mg}
+          <span class="stock-badge ${sb}">${st}</span>
+        </div>
+        <div class="product-actions">
+          <button class="btn-icon" title="Editar" onclick="openModalEditar(${p.id})">✏️</button>
+          <button class="btn-icon" title="${p.tiene_variantes ? 'Variantes' : 'Ajustar stock'}" onclick="${p.tiene_variantes ? `openModalVariantes(${p.id})` : `openModalAjuste('producto',${p.id},'${p.nombre.replace(/'/g, "\\'")}',${p.stock})`}">📦</button>
+          <button class="btn-icon" title="Desactivar" onclick="openModalEliminar(${p.id},'${p.nombre.replace(/'/g, "\\'")}')">🗑️</button>
+        </div>
+      </div>`;
+      }).join('');
+    }
+
+    function filtrarProductos() {
+      const q = $('search-productos').value.toLowerCase();
+      renderInventario(todosProductos.filter(p =>
+        p.nombre.toLowerCase().includes(q) ||
+        p.categoria.toLowerCase().includes(q) ||
+        (p.codigo_proveedor || '').toLowerCase().includes(q)
+      ));
+    }
+
+    function actualizarDatalistCategorias() {
+      const cats = [...new Set(todosProductos.map(p => p.categoria))];
+      $('categorias-list').innerHTML = cats.map(c => `<option value="${c}">`).join('');
+    }
+
+    // ═══════════════════════════════════════════
     // CREAR PRODUCTO
     // ═══════════════════════════════════════════
     function openModalCrearProducto() {
@@ -190,5 +254,3 @@
         toast(res.mensaje); cerrarModales(); cargarInventario();
       } catch (e) { toast(e.message, 'error'); }
     }
-
-    // ═══════════════════════════════════════════
