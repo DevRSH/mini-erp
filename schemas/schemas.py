@@ -87,18 +87,41 @@ class ItemCompra(BaseModel):
     costo_unitario: float = Field(..., ge=0)
 
 class CompraCrear(BaseModel):
-    proveedor: str = Field("Sin nombre", max_length=100)
+    proveedor_id: Optional[int] = None
+    proveedor: str = Field("Sin nombre", max_length=100) # Mantener para retrocompatibilidad/text plano temporal
     notas: str = Field("", max_length=300)
     costo_envio: float = Field(0, ge=0)
     items: List[ItemCompra] = Field(..., min_length=1)
     actualizar_costo: bool = Field(True, description="Si true, actualiza el costo del producto con el de esta compra")
 
 class CompraCorreccion(BaseModel):
+    proveedor_id: Optional[int] = None
     proveedor: str = Field("Sin nombre", max_length=100)
     notas: str = Field("", max_length=300)
     costo_envio: float = Field(0, ge=0)
     items: List[ItemCompra] = Field(..., min_length=1)
     actualizar_costo: bool = Field(True)
+
+# ── Proveedores ──
+
+class ProveedorCrear(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=100)
+    contacto: str = Field("", max_length=200)
+
+class ProveedorEditar(BaseModel):
+    nombre: Optional[str] = Field(None, min_length=1, max_length=100)
+    contacto: Optional[str] = Field(None, max_length=200)
+
+# ── Merma ──
+class ItemMerma(BaseModel):
+    producto_id: int
+    variante_id: Optional[int] = None
+    cantidad: int = Field(..., gt=0)
+
+class MermaCrear(BaseModel):
+    items: List[ItemMerma] = Field(..., min_length=1)
+    motivo: str = Field(..., min_length=3, max_length=200)
+
 
 # ── Conteo Físico de Inventario ──
 

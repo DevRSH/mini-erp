@@ -21,7 +21,10 @@ def historial_compras(limite: int = 50):
     limite = max(1, min(limite, 200))
     with get_db() as conn:
         compras = conn.execute(
-            "SELECT * FROM compras ORDER BY created_at DESC LIMIT ?", (limite,)
+            """SELECT c.*, p.nombre as proveedor_nombre
+               FROM compras c
+               LEFT JOIN proveedores p ON c.proveedor_id = p.id
+               ORDER BY c.created_at DESC LIMIT ?""", (limite,)
         ).fetchall()
         resultado = []
         for c in compras:
@@ -42,7 +45,12 @@ def historial_compras(limite: int = 50):
 @router.get("/api/compras/{id}")
 def detalle_compra(id: int):
     with get_db() as conn:
-        c = conn.execute("SELECT * FROM compras WHERE id=?", (id,)).fetchone()
+        c = conn.execute(
+            """SELECT c.*, p.nombre as proveedor_nombre
+               FROM compras c
+               LEFT JOIN proveedores p ON c.proveedor_id = p.id
+               WHERE c.id=?""", (id,)
+        ).fetchone()
         if not c:
             raise HTTPException(404, f"Compra {id} no encontrada")
         detalles = conn.execute(
@@ -78,6 +86,7 @@ def corregir_compra(compra_id: int, datos: CompraCorreccion):
         nueva_compra = _crear_compra_en_transaccion(
             conn,
             CompraCrear(
+                proveedor_id=datos.proveedor_id,
                 proveedor=datos.proveedor,
                 notas=datos.notas,
                 costo_envio=datos.costo_envio,

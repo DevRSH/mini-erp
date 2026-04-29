@@ -263,3 +263,32 @@ def init_inventory():
         dv_cols = _columnas_existentes(conn, "detalle_venta")
         if "descuento_item" not in dv_cols:
             conn.execute("ALTER TABLE detalle_venta ADD COLUMN descuento_item REAL NOT NULL DEFAULT 0")
+
+def init_proveedores():
+    """Migración: Entidad relacional de proveedores."""
+    with get_db() as conn:
+        if not _tabla_existe(conn, "proveedores"):
+            conn.executescript("""
+                CREATE TABLE proveedores (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    nombre     TEXT NOT NULL,
+                    contacto   TEXT DEFAULT '',
+                    activo     INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+                );
+            """)
+
+        compras_cols = _columnas_existentes(conn, "compras")
+        if "proveedor_id" not in compras_cols:
+            conn.execute("ALTER TABLE compras ADD COLUMN proveedor_id INTEGER REFERENCES proveedores(id)")
+            
+            # Migrar proveedores existentes en texto plano
+            # Obtener nombres únicos de proveedores
+            nombres = conn.execute("SELECT DISTINCT proveedor FROM compras WHERE proveedor IS NOT NULL AND proveedor != ''").fetchall()
+            for (nombre,) in nombres:
+                # Insertar en tabla proveedores
+                cursor = conn.execute("INSERT INTO proveedores (nombre) VALUES (?)", (nombre,))
+                prov_id = cursor.lastrowid
+                # Actualizar compras
+                conn.execute("UPDATE compras SET proveedor_id = ? WHERE proveedor = ?", (prov_id, nombre))
+

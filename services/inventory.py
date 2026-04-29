@@ -186,3 +186,60 @@ def confirmar_conteo_fisico(conn, conteo: list, motivo: str = "Toma de inventari
         "items_ajustados": len(items_ajustados),
         "items": items_ajustados,
     }
+
+def registrar_merma(conn, items: list, motivo: str) -> dict:
+    """
+    Registra pérdida de stock por merma.
+    
+    Args:
+        items: lista de {producto_id, variante_id?, cantidad}
+        motivo: descripción de la merma
+    """
+    from services.logic import _validar_consistencia_stock_producto
+    
+    movement_items = []
+    
+    for item in items:
+        pid = item["producto_id"]
+        vid = item.get("variante_id")
+        cantidad = item["cantidad"]
+        
+        stock_antes = obtener_stock_actual(conn, pid, vid)
+        if stock_antes < cantidad:
+             # Si no hay suficiente stock, limitamos la merma al stock actual
+             # para evitar stock negativo, o lanzamos error? 
+             # Decisión: dejar stock negativo si es necesario (merma forzada), 
+             # o limitar? Limitemos a 0 para consistencia básica.
+             cantidad = stock_antes
+        
+        stock_despues = stock_antes - cantidad
+        
+        if vid:
+            conn.execute(
+                "UPDATE variantes SET stock=? WHERE id=? AND producto_id=?",
+                (stock_despues, vid, pid)
+            )
+            total_var = conn.execute(
+                "SELECT COALESCE(SUM(stock),0) as t FROM variantes WHERE producto_id=? AND activo=1",
+                (pid,)
+            ).fetchone()["t"]
+            conn.execute("UPDATE productos SET stock=? WHERE id=?", (total_var, pid))
+        else:
+            conn.execute("UPDATE productos SET stock=? WHERE id=?", (stock_despues, pid))
+            
+        _validar_consistencia_stock_producto(conn, pid)
+        
+        movement_items.append({
+            "producto_id": pid,
+            "variante_id": vid,
+            "cantidad": -cantidad, # Es una salida
+            "stock_antes": stock_antes,
+            "stock_despues": stock_despues
+        })
+        
+    movimiento_id = registrar_movimiento(
+        conn, "merma", motivo, movement_items, referencia="merma"
+    )
+    
+    return {"movimiento_id": movimiento_id, "items": len(movement_items)}
+

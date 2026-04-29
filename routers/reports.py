@@ -121,3 +121,35 @@ def ventas_diarias(dias: int = 7):
             (f"-{dias}",)
         ).fetchall()
         return [dict(r) for r in rows]
+
+@router.get("/api/reportes/sin-movimiento")
+def productos_sin_movimiento(dias: int = 30):
+    """
+    Busca productos que no han tenido ningún movimiento (venta, compra, ajuste)
+    en los últimos X días.
+    """
+    dias = max(1, min(dias, 365))
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT p.id, p.nombre, p.stock, p.categoria,
+                   MAX(COALESCE(m.created_at, '1970-01-01')) as ultimo_movimiento
+            FROM productos p
+            LEFT JOIN inventory_movement_items mi ON mi.producto_id = p.id
+            LEFT JOIN inventory_movements m ON mi.movimiento_id = m.id
+            WHERE p.activo = 1
+            GROUP BY p.id
+            HAVING ultimo_movimiento < date('now', ? || ' days', 'localtime')
+            ORDER BY ultimo_movimiento ASC
+            """,
+            (f"-{dias}",)
+        ).fetchall()
+        
+        resultado = []
+        for r in rows:
+            d = dict(r)
+            if d["ultimo_movimiento"] == "1970-01-01":
+                d["ultimo_movimiento"] = "Nunca"
+            resultado.append(d)
+        return resultado
+

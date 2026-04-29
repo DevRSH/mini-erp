@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, Response as FastResponse, FileRespon
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List
-from database import init_db, init_compras, init_inventory, get_db
+from database import init_db, init_compras, init_inventory, init_proveedores, get_db
 from audit_service import log_transaction, snapshot_sale, snapshot_purchase, list_logs
 import os
 import secrets
@@ -34,6 +34,7 @@ async def lifespan(app: FastAPI):
     init_db()
     init_compras()
     init_inventory()
+    init_proveedores()
     yield
 
 app = FastAPI(title="NESKO", version="4.0.0", lifespan=lifespan)
@@ -117,6 +118,10 @@ app.include_router(reports_router)
 # ────────────────────────────────────────────
 from routers.purchases import router as purchases_router
 app.include_router(purchases_router)
+
+from routers.providers import router as providers_router
+app.include_router(providers_router)
+
 
 # ────────────────────────────────────────────
 # NIVEL 1 — INVENTARIO Y TIMELINE

@@ -226,10 +226,18 @@ def _crear_compra_en_transaccion(conn, compra: CompraCrear, corrected_from_id: O
         })
 
     total = subtotal + compra.costo_envio
+    
+    # Resolver nombre del proveedor para el log de movimiento si viene proveedor_id
+    nombre_proveedor = compra.proveedor
+    if compra.proveedor_id:
+        p_row = conn.execute("SELECT nombre FROM proveedores WHERE id=?", (compra.proveedor_id,)).fetchone()
+        if p_row:
+            nombre_proveedor = p_row["nombre"]
+
     cursor = conn.execute(
-        """INSERT INTO compras (proveedor, notas, subtotal, costo_envio, total, estado, corrected_from_id, corrected_by_id)
-           VALUES (?,?,?,?,?,?,?,NULL)""",
-        (compra.proveedor, compra.notas, subtotal, compra.costo_envio, total, "active", corrected_from_id),
+        """INSERT INTO compras (proveedor, proveedor_id, notas, subtotal, costo_envio, total, estado, corrected_from_id, corrected_by_id)
+           VALUES (?,?,?,?,?,?,?,?,NULL)""",
+        (nombre_proveedor, compra.proveedor_id, compra.notas, subtotal, compra.costo_envio, total, "active", corrected_from_id),
     )
     compra_id = cursor.lastrowid
     for item in items_validados:
@@ -255,15 +263,16 @@ def _crear_compra_en_transaccion(conn, compra: CompraCrear, corrected_from_id: O
 
     # Registrar movimiento de inventario
     registrar_movimiento(
-        conn, "compra", f"Compra #{compra_id} — {compra.proveedor}", movement_items,
+        conn, "compra", f"Compra #{compra_id} — {nombre_proveedor}", movement_items,
         referencia=f"compra:{compra_id}",
     )
 
     log_transaction(conn, "purchase", compra_id, "create", previous_data=None, new_data=snapshot_purchase(conn, compra_id))
     return {
         "compra_id": compra_id,
-        "proveedor": compra.proveedor,
+        "proveedor": nombre_proveedor,
         "subtotal": subtotal,
+
         "costo_envio": compra.costo_envio,
         "total": total,
         "items": items_validados,

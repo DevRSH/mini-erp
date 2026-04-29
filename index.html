@@ -110,6 +110,7 @@
     <div style="display:flex; gap:8px; margin-bottom:12px;">
       <button class="btn btn-outline btn-sm" onclick="navTo('timeline')" style="flex:1;">⏱️ Movimientos</button>
       <button class="btn btn-secondary btn-sm" onclick="openModalConteo()" style="flex:1;">📋 Toma Física</button>
+      <button class="btn btn-outline btn-sm" onclick="openModalMerma()" style="flex:1; border-color:#FF9800; color:#FF9800;">⚠️ Merma</button>
     </div>
     <div class="search-input-wrap">
       <span class="search-icon">🔍</span>
@@ -210,7 +211,10 @@
   <div class="page" id="page-compras">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
       <span class="section-title" style="margin:0;">Compras a proveedor</span>
-      <button class="btn btn-primary btn-sm" onclick="openModalCompra()">➕ Nueva compra</button>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-outline btn-sm" onclick="openModalListaProveedores()">🏢 Proveedores</button>
+        <button class="btn btn-primary btn-sm" onclick="openModalCompra()">➕ Nueva compra</button>
+      </div>
     </div>
     <div id="lista-compras">
       <div class="spinner"></div>
@@ -249,8 +253,11 @@
     <div id="reporte-stock-bajo">
       <div class="spinner"></div>
     </div>
-    <div class="section-title">🏆 Más vendidos</div>
     <div id="reporte-mas-vendidos" class="card">
+      <div class="spinner"></div>
+    </div>
+    <div class="section-title">🛑 Sin movimiento (30+ días)</div>
+    <div id="reporte-sin-movimiento">
       <div class="spinner"></div>
     </div>
   </div>
@@ -631,12 +638,69 @@
     </div>
   </div>
 
+  <!-- ═══ MODAL: REGISTRAR MERMA ═══ -->
+  <div class="modal-overlay" id="modal-merma">
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-title">⚠️ Registrar Merma</div>
+      <div class="form-group">
+        <label class="form-label">Motivo de la pérdida</label>
+        <input type="text" class="form-input" id="merma-motivo" placeholder="Ej: Vencimiento, Daño en transporte">
+      </div>
+      <div class="section-title">Seleccionar Productos</div>
+      <div class="search-input-wrap">
+        <span class="search-icon">🔍</span>
+        <input type="text" class="form-input" id="search-merma-productos" placeholder="Buscar producto..." oninput="filtrarProductosMerma()">
+      </div>
+      <div class="product-select-grid" id="productos-para-merma" style="max-height: 150px; overflow-y: auto;"></div>
+      
+      <div class="section-title">Items a Descontar</div>
+      <div class="card" id="lista-items-merma">
+        <div id="merma-items"></div>
+      </div>
+      
+      <button class="btn btn-danger" onclick="confirmarMerma()" style="margin-top:12px;">🛑 Registrar Pérdida</button>
+      <button class="btn btn-outline" onclick="cerrarModales()" style="margin-top:8px;">Cancelar</button>
+    </div>
+  </div>
+
+  <!-- ═══ MODAL: LISTA PROVEEDORES ═══ -->
+  <div class="modal-overlay" id="modal-lista-proveedores">
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-title">🏢 Gestión de Proveedores</div>
+      <button class="btn btn-primary btn-sm" onclick="openModalCrearProveedor()" style="margin-bottom:12px;">➕ Nuevo Proveedor</button>
+      <div id="lista-proveedores-crud" style="max-height: 300px; overflow-y: auto;"></div>
+      <button class="btn btn-outline" onclick="cerrarModales()" style="margin-top:12px;">Cerrar</button>
+    </div>
+  </div>
+
+  <!-- ═══ MODAL: CREAR/EDITAR PROVEEDOR ═══ -->
+  <div class="modal-overlay" id="modal-proveedor">
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-title" id="proveedor-modal-title">🏢 Proveedor</div>
+      <input type="hidden" id="proveedor-id">
+      <div class="form-group">
+        <label class="form-label">Nombre</label>
+        <input type="text" class="form-input" id="proveedor-nombre" placeholder="Ej: Coca Cola Chile">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Contacto / Notas</label>
+        <input type="text" class="form-input" id="proveedor-contacto" placeholder="Ej: WhatsApp +569...">
+      </div>
+      <button class="btn btn-primary" onclick="guardarProveedor()" style="margin-top:4px;">Guardar</button>
+      <button class="btn btn-outline" onclick="cerrarModales()" style="margin-top:8px;">Cancelar</button>
+    </div>
+  </div>
+
   <!-- Scripts Modulares (orden: dependencias → consumidores) -->
   <script src="js/globals.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/dashboard.js"></script>
   <script src="js/inventory.js"></script>
   <script src="js/inventory_moves.js"></script>
+  <script src="js/providers.js"></script>
   <script src="js/scanner.js"></script>
   <script src="js/sales.js"></script>
   <script src="js/timeline.js"></script>

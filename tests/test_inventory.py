@@ -24,6 +24,7 @@ def isolated_db(tmp_path, monkeypatch):
     database.init_db()
     database.init_compras()
     database.init_inventory()
+    database.init_proveedores()
     yield
 
 

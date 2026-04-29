@@ -92,3 +92,20 @@ def confirmar_conteo(conteo: ConteoFisico):
             for i in conteo.items
         ]
         return confirmar_conteo_fisico(conn, items_raw, motivo=conteo.motivo)
+
+
+@router.post("/api/inventario/merma", status_code=201)
+def registrar_perdida(merma: "MermaCrear"):
+    """Registra pérdida de stock (merma)."""
+    from schemas.schemas import MermaCrear
+    from services.inventory import registrar_merma
+    
+    with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        items_raw = [
+            {"producto_id": i.producto_id, "variante_id": i.variante_id,
+             "cantidad": i.cantidad}
+            for i in merma.items
+        ]
+        return registrar_merma(conn, items_raw, motivo=merma.motivo)
+

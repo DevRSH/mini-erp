@@ -10,34 +10,26 @@ async function asegurarProductosCargados() {
 
 async function openModalCompra() {
   itemsCompra = [];
-  $('compra-proveedor').value = '';
+  if ($('compra-proveedor-id')) $('compra-proveedor-id').value = '';
+  if ($('compra-proveedor-nuevo')) $('compra-proveedor-nuevo').value = '';
   $('compra-envio').value = '0';
   $('compra-notas').value = '';
   $('compra-actualizar-costo').checked = true;
 
   try {
-    await asegurarProductosCargados();
+    await Promise.all([asegurarProductosCargados(), cargarProveedores()]);
   } catch (e) {
-    toast('Error cargando productos: ' + e.message, 'error');
+    toast('Error cargando datos: ' + e.message, 'error');
     return;
   }
 
   renderItemsCompra();
   actualizarTotalCompra();
-  actualizarDatalistProveedores();
   $('modal-compra').classList.add('open');
 
   if (!todosProductos.length) {
     toast('No hay productos activos para seleccionar en compras', 'info');
   }
-}
-
-async function actualizarDatalistProveedores() {
-  try {
-    const compras = await api('GET', '/api/compras?limite=100');
-    const provs = [...new Set(compras.map(c => c.proveedor).filter(Boolean))];
-    $('proveedores-list').innerHTML = provs.map(p => `<option value="${p}">`).join('');
-  } catch (e) { }
 }
 
 function agregarItemCompra() {
@@ -151,9 +143,16 @@ async function confirmarCompra() {
     if (!item.producto_id) { toast(`Selecciona el producto en ítem ${i + 1}`, 'error'); return; }
     if (!item.cantidad || item.cantidad < 1) { toast(`Cantidad inválida en ítem ${i + 1}`, 'error'); return; }
   }
+  
+  const provId = parseInt($('compra-proveedor-id').value) || null;
+  const provNuevo = $('compra-proveedor-nuevo').value.trim();
+  
+  if (!provId && !provNuevo) { toast('Seleccione un proveedor o ingrese uno nuevo', 'error'); return; }
+  
   try {
     const res = await api('POST', '/api/compras', {
-      proveedor: $('compra-proveedor').value || 'Sin nombre',
+      proveedor_id: provId,
+      proveedor: provNuevo || 'Sin nombre',
       notas: $('compra-notas').value || '',
       costo_envio: parseFloat($('compra-envio').value) || 0,
       actualizar_costo: $('compra-actualizar-costo').checked,
@@ -187,6 +186,9 @@ async function cargarCompras() {
         const etiq = i.attr2_valor ? ` (${attr1}/${attr2})` : i.attr1_valor ? ` (${attr1})` : '';
         return `${escapeHtml(i.nombre)}${etiq} ×${i.cantidad}`;
       }).join(', ');
+      
+      const provNombre = c.proveedor_nombre || c.proveedor || 'Sin nombre';
+      
       const cancelada = c.estado === 'cancelled';
       const estadoBadge = cancelada
         ? '<span style="background:#FEE2E2;color:#991B1B;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;">❌ Cancelada</span>'
@@ -198,7 +200,7 @@ async function cargarCompras() {
     <div class="sale-card" style="${cancelada ? 'opacity:0.55;' : ''}">
       <div class="sale-header">
         <div>
-          <div class="sale-id">#${String(c.id).padStart(4, '0')} — ${escapeHtml(c.proveedor)}</div>
+          <div class="sale-id">#${String(c.id).padStart(4, '0')} — ${escapeHtml(provNombre)}</div>
           <div class="sale-date">${fecha}</div>
         </div>
         <div style="text-align:right;">
@@ -216,4 +218,5 @@ async function cargarCompras() {
     }).join('');
   } catch (e) { $('lista-compras').innerHTML = `<div class="alert-box danger"><span>${e.message}</span></div>`; }
 }
+
 

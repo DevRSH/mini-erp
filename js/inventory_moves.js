@@ -189,3 +189,123 @@ async function confirmarConteoFisico() {
     cargarInventario();
   } catch (e) { toast(e.message, 'error'); }
 }
+
+// ═══════════════════════════════════════════
+// REGISTRO DE MERMA
+// ═══════════════════════════════════════════
+let itemsMerma = {}; // key: prod_id o var_id
+
+function openModalMerma() {
+  $('merma-motivo').value = '';
+  $('search-merma-productos').value = '';
+  itemsMerma = {};
+  cargarProductosMerma();
+  renderItemsMerma();
+  $('modal-merma').classList.add('open');
+}
+
+async function cargarProductosMerma() {
+  try {
+    productosConteo = await api('GET', '/api/products');
+    filtrarProductosMerma();
+  } catch (e) { toast('Error cargando productos', 'error'); }
+}
+
+function filtrarProductosMerma() {
+  const q = $('search-merma-productos').value.toLowerCase();
+  const cont = $('productos-para-merma');
+  
+  const filtrados = productosConteo.filter(p =>
+    p.nombre.toLowerCase().includes(q) || p.categoria.toLowerCase().includes(q)
+  );
+
+  cont.innerHTML = filtrados.map(p => {
+    if (p.tiene_variantes) {
+      return `
+      <div class="product-select-item" onclick="seleccionarVarianteMerma(${p.id}, '${p.nombre.replace(/'/g, "\\'")}')">
+        <div style="font-size:22px;margin-bottom:4px;">📦</div>
+        <div class="psi-name">${p.nombre}</div>
+        <div style="font-size:10px;color:var(--info);">Seleccionar variante</div>
+      </div>`;
+    } else {
+      const key = `prod_${p.id}`;
+      const agregado = !!itemsMerma[key];
+      return `
+      <div class="product-select-item ${agregado ? 'added' : ''}" onclick="agregarAMerma(${p.id}, null, '${p.nombre.replace(/'/g, "\\'")}', ${p.stock})">
+        <div style="font-size:22px;margin-bottom:4px;">📦</div>
+        <div class="psi-name">${p.nombre}</div>
+        <div class="psi-stock">Stock: ${p.stock}</div>
+        ${agregado ? '<div style="font-size:10px;color:var(--success);">Agregado ✅</div>' : ''}
+      </div>`;
+    }
+  }).join('');
+}
+
+async function seleccionarVarianteMerma(prodId, prodNombre) {
+  try {
+    const datos = await obtenerVariantesProducto(prodId);
+    const vars = datos.variantes.filter(v => v.activo);
+    const cont = $('productos-para-merma');
+    cont.innerHTML = `
+      <div style="grid-column: 1 / -1; margin-bottom: 8px;">
+        <button class="btn btn-outline btn-sm" onclick="filtrarProductosMerma()">⬅️ Volver</button>
+      </div>
+    ` + vars.map(v => {
+      const etiq = v.attr2_valor ? `${v.attr1_valor} / ${v.attr2_valor}` : v.attr1_valor;
+      const key = `var_${v.id}`;
+      const agregado = !!itemsMerma[key];
+      return `
+      <div class="product-select-item ${agregado ? 'added' : ''}" onclick="agregarAMerma(${prodId}, ${v.id}, '${prodNombre} - ${etiq}', ${v.stock})">
+        <div style="font-size:22px;margin-bottom:4px;">🏷️</div>
+        <div class="psi-name">${etiq}</div>
+        <div class="psi-stock">Stock: ${v.stock}</div>
+      </div>`;
+    }).join('');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function agregarAMerma(prodId, varId, nombre, stock) {
+  const key = varId ? `var_${varId}` : `prod_${prodId}`;
+  if (!itemsMerma[key]) {
+    itemsMerma[key] = { producto_id: prodId, variante_id: varId, nombre: nombre, cantidad: 1, stock_max: stock };
+  }
+  renderItemsMerma();
+  filtrarProductosMerma();
+}
+
+function renderItemsMerma() {
+  const cont = $('merma-items');
+  const items = Object.entries(itemsMerma);
+  if (!items.length) { cont.innerHTML = '<p style="text-align:center; padding:10px; font-size:13px; color:#999;">Agrega productos arriba</p>'; return; }
+  
+  cont.innerHTML = items.map(([key, item]) => `
+    <div class="cart-item">
+      <div style="flex:1;">
+        <div class="cart-name">${item.nombre}</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <input type="number" class="form-input" style="width:60px; padding:4px;" value="${item.cantidad}" min="1" max="${item.stock_max}" onchange="itemsMerma['${key}'].cantidad = parseInt(this.value)">
+        <button class="btn btn-outline btn-sm" style="color:var(--danger); border:none;" onclick="delete itemsMerma['${key}']; renderItemsMerma(); filtrarProductosMerma();">❌</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function confirmarMerma() {
+  const motivo = $('merma-motivo').value.trim();
+  if (!motivo) { toast('Indique el motivo', 'error'); return; }
+  const items = Object.values(itemsMerma).map(i => ({
+    producto_id: i.producto_id,
+    variante_id: i.variante_id,
+    cantidad: i.cantidad
+  }));
+  if (!items.length) { toast('No hay items seleccionados', 'error'); return; }
+  
+  try {
+    await api('POST', '/api/inventario/merma', { items, motivo });
+    toast('Merma registrada correctamente');
+    cerrarModales();
+    cargarInventario();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
