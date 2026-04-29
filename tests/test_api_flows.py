@@ -12,6 +12,9 @@ import pytest
 
 import database
 import main
+import dependencies
+from routers import auth
+from schemas import schemas
 
 
 @pytest.fixture(autouse=True)
@@ -240,7 +243,7 @@ def test_historiales_devuelven_created_at_iso():
 
 
 def test_api_sesion_sin_cookie_devuelve_autenticado_false():
-    respuesta = main.verificar_sesion(fake_request())
+    respuesta = auth.verificar_sesion(fake_request())
     assert respuesta == {"autenticado": False}
 
 
@@ -345,10 +348,10 @@ def test_limite_invalido_se_normaliza_sin_romper(ruta):
 
 
 def test_cookie_secure_condicionada_por_flag_si_es_viable(monkeypatch):
-    monkeypatch.setattr(main, "APP_PIN", "1234")
-    monkeypatch.setattr(main, "COOKIE_HTTPONLY", True)
-    monkeypatch.setattr(main, "COOKIE_SAMESITE", "lax")
-    monkeypatch.setattr(main, "COOKIE_SECURE", True)
+    monkeypatch.setattr(auth, "APP_PIN", "1234")
+    monkeypatch.setattr(auth, "COOKIE_HTTPONLY", True)
+    monkeypatch.setattr(auth, "COOKIE_SAMESITE", "lax")
+    monkeypatch.setattr(auth, "COOKIE_SECURE", True)
 
     class ResponseDummy:
         def __init__(self):
@@ -358,7 +361,7 @@ def test_cookie_secure_condicionada_por_flag_si_es_viable(monkeypatch):
             self.cookies = kwargs
 
     response = ResponseDummy()
-    out = main.login(main.LoginRequest(pin="1234"), response, fake_request())
+    out = auth.login(schemas.LoginRequest(pin="1234"), response, fake_request())
     assert out["mensaje"] == "Acceso concedido"
     assert response.cookies is not None
     assert response.cookies["secure"] is True

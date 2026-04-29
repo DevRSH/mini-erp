@@ -22,51 +22,11 @@ import sqlite3
 # CONFIGURACIÓN DE SEGURIDAD
 # ────────────────────────────────────────────
 
-APP_PIN       = os.environ.get("APP_PIN", "1234")          # PIN de 4 dígitos
-BACKUP_KEY    = os.environ.get("BACKUP_KEY", "")           # Clave backup
-SESSION_HOURS = int(os.environ.get("SESSION_HOURS", "8"))  # Duración sesión
-SECRET_KEY    = os.environ.get("SECRET_KEY",               # Clave firma tokens
-                secrets.token_hex(32))
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
-_APP_ENV = os.environ.get("APP_ENV", os.environ.get("ENV", "development")).strip().lower()
-COOKIE_SECURE = _env_bool("COOKIE_SECURE", _APP_ENV in {"production", "prod"})
-COOKIE_HTTPONLY = _env_bool("COOKIE_HTTPONLY", True)
-COOKIE_SAMESITE = os.environ.get("COOKIE_SAMESITE", "lax").strip().lower()
-if COOKIE_SAMESITE not in {"lax", "strict", "none"}:
-    COOKIE_SAMESITE = "lax"
-
-def _hash_pin(pin: str) -> str:
-    return hashlib.sha256(f"{SECRET_KEY}{pin}".encode()).hexdigest()
-
-def _generar_token(pin: str) -> str:
-    """Token = hash(pin) + timestamp de expiración."""
-    expira = int(time.time()) + SESSION_HOURS * 3600
-    raw = f"{_hash_pin(pin)}:{expira}"
-    firma = hashlib.sha256(f"{SECRET_KEY}{raw}".encode()).hexdigest()
-    return f"{raw}:{firma}"
-
-def _validar_token(token: str) -> bool:
-    """Verifica que el token es auténtico y no expiró."""
-    try:
-        partes = token.split(":")
-        if len(partes) != 3:
-            return False
-        hash_pin, expira, firma = partes
-        if int(expira) < int(time.time()):
-            return False
-        raw = f"{hash_pin}:{expira}"
-        firma_esperada = hashlib.sha256(f"{SECRET_KEY}{raw}".encode()).hexdigest()
-        return secrets.compare_digest(firma, firma_esperada)
-    except Exception:
-        return False
+from dependencies import (
+    APP_PIN, BACKUP_KEY, SESSION_HOURS, SECRET_KEY,
+    COOKIE_SECURE, COOKIE_HTTPONLY, COOKIE_SAMESITE,
+    _hash_pin, _generar_token, _validar_token, check_rate_limit
+)
 
 # Rutas que no requieren autenticación
 RUTAS_PUBLICAS = {"/", "/login", "/manifest.json",
@@ -135,57 +95,14 @@ async def auth_middleware(request: Request, call_next):
 
     return await call_next(request)
 
-# ────────────────────────────────────────────
-# LIMITADOR DE TASA (RATE LIMITING)
-# ────────────────────────────────────────────
 
-LOGIN_ATTEMPTS = {}
-
-def check_rate_limit(request: Request):
-    ip = request.client.host
-    now = time.time()
-    # Conservar solo los intentos del último minuto
-    LOGIN_ATTEMPTS[ip] = [t for t in LOGIN_ATTEMPTS.get(ip, []) if now - t < 60]
-    if len(LOGIN_ATTEMPTS[ip]) >= 5:
-        raise HTTPException(status_code=429, detail="Demasiados intentos. Espera 1 minuto.")
-    LOGIN_ATTEMPTS[ip].append(now)
 
 # ────────────────────────────────────────────
 # AUTENTICACIÓN — ENDPOINTS
 # ────────────────────────────────────────────
 
-class LoginRequest(BaseModel):
-    pin: str = Field(..., min_length=4, max_length=6)
-
-@app.post("/api/login")
-def login(datos: LoginRequest, response: Response, request: Request):
-    """Valida el PIN y devuelve una cookie de sesión."""
-    check_rate_limit(request)
-    if not secrets.compare_digest(datos.pin.strip(), APP_PIN):
-        raise HTTPException(401, "PIN incorrecto")
-
-    token = _generar_token(datos.pin)
-    response.set_cookie(
-        key="erp_session",
-        value=token,
-        max_age=SESSION_HOURS * 3600,
-        httponly=COOKIE_HTTPONLY,
-        samesite=COOKIE_SAMESITE,
-        secure=COOKIE_SECURE,
-    )
-    return {"mensaje": "Acceso concedido", "horas": SESSION_HOURS}
-
-@app.post("/api/logout")
-def logout(response: Response):
-    response.delete_cookie("erp_session")
-    return {"mensaje": "Sesión cerrada"}
-
-@app.get("/api/sesion")
-def verificar_sesion(request: Request):
-    token = request.cookies.get("erp_session")
-    if token and _validar_token(token):
-        return {"autenticado": True}
-    return {"autenticado": False}
+from routers.auth import router as auth_router
+app.include_router(auth_router)
 
 # ────────────────────────────────────────────
 # SCHEMAS

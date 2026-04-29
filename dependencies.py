@@ -8,6 +8,7 @@ from fastapi import Request, HTTPException
 # CONFIGURACIÓN Y CONSTANTES
 # ────────────────────────────────────────────
 APP_PIN = os.environ.get("APP_PIN", "1234")
+BACKUP_KEY = os.environ.get("BACKUP_KEY", "")
 SESSION_HOURS = int(os.environ.get("SESSION_HOURS", "24"))
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key-12345")
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
