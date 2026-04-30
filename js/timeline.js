@@ -24,12 +24,14 @@ function renderTimeline(eventos) {
     return;
   }
 
-  const html = eventos.map(e => {
+  cont.innerHTML = eventos.map(e => {
     const isCancel = e.tipo === 'cancelacion';
     const hasMonto = e.monto !== null && e.monto !== undefined;
+    const hasItems = e.items && e.items.length > 0;
+    
     return `
-    <div class="card" style="margin-bottom:12px; border-left: 4px solid ${isCancel ? 'var(--danger)' : 'var(--primary)'}">
-      <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+    <div class="card timeline-card" onclick="toggleTimelineDetail(this)" style="margin-bottom:12px; border-left: 4px solid ${isCancel ? 'var(--danger)' : 'var(--primary)'}">
+      <div class="timeline-header">
         <div style="display:flex; gap:12px;">
           <div style="font-size:24px;">${e.icono}</div>
           <div>
@@ -44,10 +46,31 @@ function renderTimeline(eventos) {
             </div>
           </div>
         </div>
-        ${hasMonto ? `<div style="font-weight:700; font-size:16px;">${fmt(e.monto)}</div>` : ''}
+        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px;">
+          ${hasMonto ? `<div style="font-weight:700; font-size:16px;">${fmt(e.monto)}</div>` : ''}
+          <div class="timeline-arrow">▼</div>
+        </div>
+      </div>
+      
+      <div class="timeline-details">
+        <ul class="timeline-items-list">
+          ${hasItems ? e.items.map(it => `<li class="timeline-item-detail">${escapeHtml(it)}</li>`).join('') : '<li class="timeline-empty-detail">Sin detalles adicionales</li>'}
+        </ul>
       </div>
     </div>`;
   }).join('');
+}
 
-  cont.innerHTML = html;
+function toggleTimelineDetail(card) {
+  const allCards = document.querySelectorAll('.timeline-card');
+  const isExpanded = card.classList.contains('expanded');
+  
+  // Opcional: Cerrar otros si quieres estilo acordeón, pero mejor dejar que abran varios
+  // allCards.forEach(c => c.classList.remove('expanded'));
+  
+  if (isExpanded) {
+    card.classList.remove('expanded');
+  } else {
+    card.classList.add('expanded');
+  }
 }

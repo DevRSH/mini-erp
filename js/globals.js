@@ -44,7 +44,15 @@ async function api(method, path, body = null) {
   opts.credentials = 'same-origin';
   const res = await fetch(path, opts);
   const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || 'Error del servidor');
+  if (!res.ok) {
+    let msg = 'Error del servidor';
+    if (data.detail) {
+      if (typeof data.detail === 'string') msg = data.detail;
+      else if (Array.isArray(data.detail)) msg = data.detail.map(e => `${e.loc.join('.')}: ${e.msg}`).join(' | ');
+      else msg = JSON.stringify(data.detail);
+    }
+    throw new Error(msg);
+  }
   return data;
 }
 
@@ -75,7 +83,7 @@ function navTo(pag) {
   $(`page-${pag}`).classList.add('active');
   $(`nav-${pag}`).classList.add('active');
   const loaders = {
-    dashboard: cargarDashboard,
+    dashboard: () => { cargarDashboard(); cargarProveedores(); },
     inventario: cargarInventario,
     ventas: cargarProductosVenta,
     compras: cargarCompras,

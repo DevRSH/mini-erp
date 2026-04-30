@@ -171,17 +171,14 @@ async function confirmarCompra() {
 }
 
 async function cargarCompras() {
-  const cont = $('lista-compras');
-  if (!cont) return;
-  cont.innerHTML = '<div class="spinner"></div>';
-  cargarProveedores(); 
+  $('lista-compras').innerHTML = '<div class="spinner"></div>';
   try {
     const compras = await api('GET', '/api/compras?limite=50');
     if (!compras.length) {
-      cont.innerHTML = '<div class="empty-state"><div class="empty-icon">🚚</div><p>Sin compras registradas.</p></div>';
+      $('lista-compras').innerHTML = '<div class="empty-state"><div class="empty-icon">🚚</div><p>Sin compras registradas.</p></div>';
       return;
     }
-    cont.innerHTML = compras.map(c => {
+    $('lista-compras').innerHTML = compras.map(c => {
       const fecha = new Date(c.created_at).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
       const itemsTxt = c.items.map(i => {
         const attr1 = escapeHtml(i.attr1_valor);
@@ -219,9 +216,7 @@ async function cargarCompras() {
       </div>
     </div>`;
     }).join('');
-  } catch (e) { 
-    cont.innerHTML = `<div class="alert-box danger"><span>Error: ${e.message}</span></div>`; 
-  }
+  } catch (e) { $('lista-compras').innerHTML = `<div class="alert-box danger"><span>${e.message}</span></div>`; }
 }
 
 
