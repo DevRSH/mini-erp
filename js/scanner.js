@@ -8,29 +8,75 @@ function toggleScanner() {
 
 function iniciarScanner(containerId, callback) {
   if (scannerActivo) return;
+  
+  if (typeof Html5Qrcode === 'undefined') {
+    toast('Error: Librería de escáner no cargada', 'error');
+    console.error('Html5Qrcode is not defined. Check if the script is loaded in index.html');
+    return;
+  }
+
+  const container = $(containerId);
+  if (!container) {
+    toast('Error: Contenedor del escáner no encontrado', 'error');
+    return;
+  }
+
+  console.log('Iniciando escáner en:', containerId);
   html5QrCode = new Html5Qrcode(containerId);
+  
+  const config = { 
+    fps: 10, 
+    qrbox: { width: 250, height: 120 },
+    aspectRatio: 1.0
+  };
+
   html5QrCode.start(
     { facingMode: "environment" },
-    { fps: 10, qrbox: { width: 250, height: 120 } },
-    (decodedText) => { callback(decodedText); detenerScanner(); }
+    config,
+    (decodedText) => { 
+      console.log('Código detectado:', decodedText);
+      callback(decodedText); 
+      detenerScanner(); 
+    }
   ).then(() => {
     scannerActivo = true;
-    $('btn-escanear').textContent = '⏹️ Detener escáner';
+    const btn = $('btn-escanear');
+    if (btn) btn.textContent = '⏹️ Detener escáner';
+    console.log('Escáner activo ✅');
   }).catch(err => {
-    toast('No se pudo acceder a la cámara: ' + err, 'error');
+    scannerActivo = false;
+    console.error('Error al iniciar escáner:', err);
+    let msg = 'No se pudo acceder a la cámara';
+    if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+      msg += ' (Se requiere HTTPS para usar la cámara)';
+    } else {
+      msg += ': ' + err;
+    }
+    toast(msg, 'error');
   });
 }
 
 function detenerScanner() {
-  if (html5QrCode && scannerActivo) {
-    html5QrCode.stop().catch(() => { });
-    html5QrCode = null;
+  if (html5QrCode) {
+    console.log('Deteniendo escáner...');
+    html5QrCode.stop()
+      .then(() => {
+        console.log('Escáner detenido.');
+        const cont = $('scanner-container');
+        if (cont) cont.innerHTML = '';
+      })
+      .catch(err => console.warn('Error al detener escáner:', err))
+      .finally(() => {
+        html5QrCode = null;
+        scannerActivo = false;
+        const btn = $('btn-escanear');
+        if (btn) btn.textContent = '📷 Escanear código';
+      });
+  } else {
+    scannerActivo = false;
+    const btn = $('btn-escanear');
+    if (btn) btn.textContent = '📷 Escanear código';
   }
-  scannerActivo = false;
-  const btn = $('btn-escanear');
-  if (btn) btn.textContent = '📷 Escanear código';
-  const cont = $('scanner-container');
-  if (cont) cont.innerHTML = '';
 }
 
 async function onCodigoEscaneadoVenta(codigo) {

@@ -1,10 +1,14 @@
 // service-worker.js — Fika PWA
-const CACHE = 'fika-v4';
+const CACHE = 'fika-v5'; // Incrementar versión para forzar actualización
 
 // Recursos del shell de la app que se cachean al instalar
 const SHELL = [
   '/',
   '/manifest.json',
+  '/css/styles.css',
+  '/js/globals.js',
+  '/js/scanner.js',
+  '/js/main.js'
 ];
 
 // Al instalar: cachear el shell
@@ -25,29 +29,38 @@ self.addEventListener('activate', e => {
   self.clients.claim();
 });
 
-// Estrategia: Network First para la API, Cache First para el shell
+// Estrategia: Network First para todo (prioriza frescura)
+// Si falla la red, intenta buscar en el cache.
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
 
-  // Peticiones a la API → siempre red (datos en tiempo real)
-  if (url.pathname.startsWith('/api/')) {
-    e.respondWith(
-      fetch(e.request).catch(() =>
-        new Response(JSON.stringify({ detail: 'Sin conexión. Verifica tu red.' }),
-          { status: 503, headers: { 'Content-Type': 'application/json' } })
-      )
-    );
-    return;
-  }
+  // Ignorar peticiones que no sean GET
+  if (e.request.method !== 'GET') return;
 
-  // Shell de la app → cache first, fallback a red
+  // Estrategia: Network First
   e.respondWith(
-    caches.match(e.request).then(cached =>
-      cached || fetch(e.request).then(response => {
-        const clone = response.clone();
-        caches.open(CACHE).then(cache => cache.put(e.request, clone));
+    fetch(e.request)
+      .then(response => {
+        // Si la respuesta es válida, clonarla y guardarla en el cache
+        if (response.ok && !url.pathname.startsWith('/api/')) {
+          const clone = response.clone();
+          caches.open(CACHE).then(cache => cache.put(e.request, clone));
+        }
         return response;
       })
-    )
+      .catch(() => {
+        // Si falla la red, intentar buscar en el cache
+        return caches.match(e.request).then(cached => {
+          if (cached) return cached;
+          // Si no está en cache y es la API, error JSON
+          if (url.pathname.startsWith('/api/')) {
+            return new Response(JSON.stringify({ detail: 'Sin conexión' }), {
+              status: 503,
+              headers: { 'Content-Type': 'application/json' }
+            });
+          }
+          // Si no está en cache y es una página, etc...
+        });
+      })
   );
 });

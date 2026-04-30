@@ -4,7 +4,20 @@
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/service-worker.js')
-      .then(() => console.log('✅ Service Worker registrado'))
+      .then(reg => {
+        console.log('✅ Service Worker registrado');
+        // Detectar actualizaciones del SW
+        reg.onupdatefound = () => {
+          const installingWorker = reg.installing;
+          installingWorker.onstatechange = () => {
+            if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              // Nueva versión disponible
+              toast('Nueva versión disponible. Recargando para actualizar...', 'info');
+              setTimeout(() => window.location.reload(), 2000);
+            }
+          };
+        };
+      })
       .catch(e => console.warn('SW error:', e));
   });
 }
