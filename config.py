@@ -23,7 +23,7 @@ class Settings(BaseSettings):
         default="dev-secret-key-cambiar-en-produccion",
         description="Clave secreta para firmar JWT",
     )
-    session_hours: int = Field(default=12, description="Duración de sesión en horas")
+    session_hours: int = Field(default=2, description="Duración de sesión en horas")
 
     # ── Cookies ──
     cookie_secure: bool = Field(default=False, description="Cookie solo HTTPS")
