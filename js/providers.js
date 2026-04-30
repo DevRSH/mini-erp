@@ -84,7 +84,7 @@ async function guardarProveedor() {
       await api('PATCH', `/api/proveedores/${id}`, data);
       toast('Actualizado');
     } else {
-      await api('POST', '/api/proveedores/', data);
+      await api('POST', '/api/proveedores', data);
       toast('Creado');
     }
     cerrarModales();
