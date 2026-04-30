@@ -300,7 +300,7 @@
       <div style="margin-top:20px; display:flex; gap:10px;">
         <button class="btn btn-outline btn-sm" onclick="exportarTableroHTML()" style="flex:1;">📤 Compartir Tablero</button>
       </div>
-    
+    </div>
     <!-- SECCIÓN: RENTABILIDAD -->
     <div id="reporte-rentabilidad-content" style="display:none;">
       <div class="card" id="rentabilidad-resumen">
@@ -579,11 +579,29 @@
         <button class="btn btn-outline btn-sm" onclick="exportarProductosHTML()" style="width:100%;">📤 Exportar Catálogo Completo</button>
       </div>
     </div>
-    </div>
 
     <!-- SECCIÓN: REPORTES DETALLADOS (Existente) -->
     <div id="reporte-detallado-content" style="display:none;">
-      <div class="period-tabs" style="margin-bottom:12px; background:rgba(0,0,0,0.05); padding:4px; border-radius:8px;">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="r-ventas">0</div>
+          <div class="stat-label">Ventas</div>
+        </div>
+        <div class="stat-card success">
+          <div class="stat-value" id="r-ingresos">$0</div>
+          <div class="stat-label">Ingresos</div>
+        </div>
+        <div class="stat-card warn">
+          <div class="stat-value" id="r-ganancia">$0</div>
+          <div class="stat-label">Ganancia</div>
+        </div>
+        <div class="stat-card info">
+          <div class="stat-value" id="r-ticket">$0</div>
+          <div class="stat-label">Ticket Prom.</div>
+        </div>
+      </div>
+
+      <div class="period-tabs" style="margin-bottom:12px; background:rgba(0,0,0,0.05); padding:4px; border-radius:8px; margin-top:16px;">
         <button class="period-tab btn-sm active" onclick="cambiarPeriodo('hoy',this)">Hoy</button>
         <button class="period-tab btn-sm" onclick="cambiarPeriodo('semana',this)">7 días</button>
         <button class="period-tab btn-sm" onclick="cambiarPeriodo('mes',this)">Este mes</button>
