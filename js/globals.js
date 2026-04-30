@@ -88,7 +88,7 @@ function navTo(pag) {
     ventas: cargarProductosVenta,
     compras: cargarCompras,
     timeline: cargarTimeline,
-    reportes: () => cargarReportes('hoy')
+    reportes: () => setPeriodoTablero('7d')
   };
   if (loaders[pag]) loaders[pag]();
 }

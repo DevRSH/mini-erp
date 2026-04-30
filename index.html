@@ -231,28 +231,76 @@
   <!-- ═══ REPORTES ═══ -->
   <div class="page" id="page-reportes">
     <div class="period-tabs">
-      <button class="period-tab active" onclick="cambiarPeriodo('hoy',this)">Hoy</button>
-      <button class="period-tab" onclick="cambiarPeriodo('semana',this)">7 días</button>
-      <button class="period-tab" onclick="cambiarPeriodo('mes',this)">Este mes</button>
+      <button class="period-tab active" onclick="cambiarSeccionReporte('tablero', this)">Tablero</button>
+      <button class="period-tab" onclick="cambiarSeccionReporte('detallado', this)">Detallado</button>
     </div>
-    <div class="stats-grid">
-      <div class="stat-card primary">
-        <div class="stat-value" id="r-ventas">—</div>
-        <div class="stat-label">Ventas</div>
+
+    <!-- Filtros de Período (para Tablero) -->
+    <div id="filtros-tablero" class="card" style="padding:12px; margin-bottom:16px;">
+      <div style="display:flex; gap:8px; margin-bottom:12px; overflow-x:auto;">
+        <button class="btn btn-outline btn-sm" onclick="setPeriodoTablero('hoy')">Hoy</button>
+        <button class="btn btn-outline btn-sm" onclick="setPeriodoTablero('7d')">7 días</button>
+        <button class="btn btn-outline btn-sm" onclick="setPeriodoTablero('30d')">30 días</button>
       </div>
-      <div class="stat-card success">
-        <div class="stat-value" id="r-ingresos">—</div>
-        <div class="stat-label">Ingresos</div>
-      </div>
-      <div class="stat-card warn">
-        <div class="stat-value" id="r-ganancia">—</div>
-        <div class="stat-label">Ganancia est.</div>
-      </div>
-      <div class="stat-card info">
-        <div class="stat-value" id="r-ticket">—</div>
-        <div class="stat-label">Ticket prom.</div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <input type="date" class="form-input" id="tablero-desde" style="padding:6px 10px; font-size:13px;">
+        <span style="color:var(--muted);">a</span>
+        <input type="date" class="form-input" id="tablero-hasta" style="padding:6px 10px; font-size:13px;">
+        <button class="btn btn-primary btn-sm" onclick="cargarTablero()">🔍</button>
       </div>
     </div>
+
+    <!-- SECCIÓN: TABLERO DE CONTROL -->
+    <div id="reporte-tablero-content">
+      <div class="stats-grid" id="tablero-kpis">
+        <div class="stat-card primary">
+          <div class="stat-label">Ventas</div>
+          <div class="stat-value" id="t-ventas">—</div>
+          <div class="stat-variation" id="v-ventas"></div>
+        </div>
+        <div class="stat-card success">
+          <div class="stat-label">Ingresos</div>
+          <div class="stat-value" id="t-ingresos">—</div>
+          <div class="stat-variation" id="v-ingresos"></div>
+        </div>
+        <div class="stat-card warn">
+          <div class="stat-label">Ganancia</div>
+          <div class="stat-value" id="t-ganancia">—</div>
+          <div class="stat-variation" id="v-ganancia"></div>
+        </div>
+        <div class="stat-card info">
+          <div class="stat-label">Ticket Prom.</div>
+          <div class="stat-value" id="t-ticket">—</div>
+          <div class="stat-variation" id="v-ticket" style="font-size:10px; opacity:0.7;">vs anterior</div>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr; gap:16px; margin-top:16px;">
+        <div class="card" style="padding:16px;">
+          <div class="section-title" style="margin-top:0;">💳 Métodos de Pago</div>
+          <div id="tablero-metodos"></div>
+        </div>
+        
+        <div class="card" style="padding:16px;">
+          <div class="section-title" style="margin-top:0;">🏆 Top 5 Productos</div>
+          <div id="tablero-top"></div>
+        </div>
+
+        <div id="tablero-alertas-container"></div>
+      </div>
+
+      <div style="margin-top:20px; display:flex; gap:10px;">
+        <button class="btn btn-outline btn-sm" onclick="exportarTableroHTML()" style="flex:1;">📤 Compartir Tablero</button>
+      </div>
+    </div>
+
+    <!-- SECCIÓN: REPORTES DETALLADOS (Existente) -->
+    <div id="reporte-detallado-content" style="display:none;">
+      <div class="period-tabs" style="margin-bottom:12px; background:rgba(0,0,0,0.05); padding:4px; border-radius:8px;">
+        <button class="period-tab btn-sm active" onclick="cambiarPeriodo('hoy',this)">Hoy</button>
+        <button class="period-tab btn-sm" onclick="cambiarPeriodo('semana',this)">7 días</button>
+        <button class="period-tab btn-sm" onclick="cambiarPeriodo('mes',this)">Este mes</button>
+      </div>
     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:14px;">
       <button class="btn btn-outline btn-sm" id="btn-exportar" onclick="exportarReporte()">📄 Reporte Hoy</button>
       <button class="btn btn-outline btn-sm" onclick="exportarTodoCSV()" style="background:var(--success); color:white; border:none;">📊 Exportar CSV</button>
@@ -277,6 +325,7 @@
       <div class="spinner"></div>
     </div>
   </div>
+</div>
 
   <!-- ═══ NAV ═══ -->
   <nav class="bottom-nav">

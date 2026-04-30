@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from database import get_db
+from datetime import datetime, timedelta
 
 router = APIRouter(tags=["Reportes"])
 
@@ -252,4 +253,110 @@ def exportar_full():
         return {
             "movimientos": [dict(m) for m in movs],
             "inventario": [dict(i) for i in inv]
+        }
+@router.get("/api/reportes/tablero")
+def tablero(desde: str, hasta: str):
+    """Reporte de Tablero de Control con comparación de periodos."""
+    try:
+        dt_desde = datetime.strptime(desde, "%Y-%m-%d")
+        dt_hasta = datetime.strptime(hasta, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(400, "Formato de fecha inválido. Use YYYY-MM-DD")
+
+    if dt_hasta < dt_desde:
+        raise HTTPException(400, "La fecha 'hasta' no puede ser anterior a 'desde'")
+    
+    # Calcular periodo anterior (mismo número de días)
+    dias = (dt_hasta - dt_desde).days + 1
+    dt_desde_ant = dt_desde - timedelta(days=dias)
+    dt_hasta_ant = dt_desde - timedelta(days=1)
+    
+    desde_ant = dt_desde_ant.strftime("%Y-%m-%d")
+    hasta_ant = dt_hasta_ant.strftime("%Y-%m-%d")
+    
+    def get_period_stats(conn, d, h):
+        where = f"date(created_at, 'localtime') BETWEEN date('{d}') AND date('{h}') AND estado='active'"
+        
+        # Básicos
+        rv = conn.execute(
+            f"""SELECT COUNT(*) AS total_ventas,
+                       COALESCE(SUM(total),0) AS ingresos,
+                       COALESCE(AVG(total),0) AS ticket_promedio
+                FROM ventas WHERE {where}"""
+        ).fetchone()
+        
+        # Ganancia
+        ganancia = conn.execute(
+            f"""SELECT COALESCE(SUM(
+                    d.subtotal - (d.cantidad * (p.costo + COALESCE(p.costo_envio,0)))
+                ), 0) AS ganancia_estimada
+                FROM detalle_venta d
+                JOIN productos p ON d.producto_id = p.id
+                JOIN ventas v ON d.venta_id = v.id
+                WHERE date(v.created_at, 'localtime') BETWEEN date('{d}') AND date('{h}') AND v.estado='active'"""
+        ).fetchone()
+        
+        return {
+            "ventas": rv["total_ventas"],
+            "ingresos": float(rv["ingresos"]),
+            "ticket_promedio": float(round(rv["ticket_promedio"], 2)),
+            "ganancia_estimada": float(round(ganancia["ganancia_estimada"], 2))
+        }
+
+    with get_db() as conn:
+        actual = get_period_stats(conn, desde, hasta)
+        anterior = get_period_stats(conn, desde_ant, hasta_ant)
+        
+        def calc_variation(act, ant):
+            if ant == 0: return None
+            return round(((act - ant) / ant) * 100, 1)
+        
+        variacion = {
+            "ventas_pct": calc_variation(actual["ventas"], anterior["ventas"]),
+            "ingresos_pct": calc_variation(actual["ingresos"], anterior["ingresos"]),
+            "ganancia_pct": calc_variation(actual["ganancia_estimada"], anterior["ganancia_estimada"])
+        }
+        
+        # Desglose por método
+        por_metodo = {}
+        for m in ["efectivo", "transferencia", "tarjeta"]:
+            row = conn.execute(
+                f"""SELECT COUNT(*) AS v, COALESCE(SUM(total),0) AS t
+                    FROM ventas 
+                    WHERE date(created_at, 'localtime') BETWEEN date('{desde}') AND date('{hasta}') 
+                      AND estado='active' AND metodo_pago=?""",
+                (m,)
+            ).fetchone()
+            por_metodo[m] = {
+                "ventas": row["v"],
+                "total": float(row["t"]),
+                "pct": round((row["t"] / actual["ingresos"] * 100), 1) if actual["ingresos"] > 0 else 0
+            }
+            
+        # Top 5 productos
+        top = conn.execute(
+            f"""SELECT p.nombre, SUM(d.cantidad) AS total_vendido, SUM(d.subtotal) AS ingresos
+                FROM detalle_venta d
+                JOIN productos p ON d.producto_id = p.id
+                JOIN ventas v ON d.venta_id = v.id
+                WHERE date(v.created_at, 'localtime') BETWEEN date('{desde}') AND date('{hasta}') 
+                  AND v.estado='active'
+                GROUP BY p.id
+                ORDER BY total_vendido DESC
+                LIMIT 5"""
+        ).fetchall()
+        
+        # Alertas de stock total (badge)
+        alertas = conn.execute(
+            "SELECT COUNT(*) AS c FROM productos WHERE activo=1 AND stock <= stock_minimo"
+        ).fetchone()
+        
+        return {
+            "periodo": {"desde": desde, "hasta": hasta, "desde_ant": desde_ant, "hasta_ant": hasta_ant},
+            "actual": actual,
+            "anterior": anterior,
+            "variacion": variacion,
+            "por_metodo": por_metodo,
+            "top_productos": [dict(t) for t in top],
+            "alertas_stock": alertas["c"]
         }
