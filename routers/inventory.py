@@ -4,9 +4,9 @@ routers/inventory.py — Movimientos de inventario y conteo físico
 
 from fastapi import APIRouter, HTTPException
 from database import get_db
-from schemas.schemas import ConteoFisico
-from services.inventory import comparar_conteo_fisico, confirmar_conteo_fisico
+from services.inventory import comparar_conteo_fisico, confirmar_conteo_fisico, registrar_merma
 from services.logic import _to_iso_dt
+from schemas.schemas import ConteoFisico, MermaCrear
 
 router = APIRouter(tags=["Inventario"])
 
@@ -95,11 +95,8 @@ def confirmar_conteo(conteo: ConteoFisico):
 
 
 @router.post("/api/inventario/merma", status_code=201)
-def registrar_perdida(merma: "MermaCrear"):
+def registrar_perdida(merma: MermaCrear):
     """Registra pérdida de stock (merma)."""
-    from schemas.schemas import MermaCrear
-    from services.inventory import registrar_merma
-    
     with get_db() as conn:
         conn.execute("BEGIN IMMEDIATE")
         items_raw = [

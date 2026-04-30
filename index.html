@@ -531,9 +531,13 @@
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">Proveedor</label>
-          <input type="text" class="form-input" id="compra-proveedor" placeholder="Nombre proveedor"
-            list="proveedores-list">
-          <datalist id="proveedores-list"></datalist>
+          <div style="display:flex; gap:8px; margin-bottom:8px;">
+            <select class="form-select" id="compra-proveedor-id" style="flex:1;">
+              <option value="">Seleccionar proveedor...</option>
+            </select>
+            <button class="btn btn-outline btn-sm" onclick="openModalCrearProveedor()" style="padding:0 12px; height:46px;">➕</button>
+          </div>
+          <input type="text" class="form-input" id="compra-proveedor-nuevo" placeholder="O escribe nombre de uno nuevo">
         </div>
         <div class="form-group">
           <label class="form-label">Costo envío</label>
@@ -703,7 +707,7 @@
     </div>
   </div>
 
-  <!-- Scripts Modulares (orden: dependencias → consumidores) -->
+  <!-- Scripts Modulares -->
   <script src="js/globals.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/dashboard.js"></script>

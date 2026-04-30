@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from database import get_db
 from schemas.schemas import ProductoCrear, ProductoEditar, AjusteStock, VarianteCrear, VarianteEditar, AjusteVariante
 from services.logic import _producto_full
+from services.inventory import registrar_movimiento
 
 router = APIRouter(tags=["Productos"])
 
@@ -102,6 +103,16 @@ def ajustar_stock(id: int, ajuste: AjusteStock):
             raise HTTPException(400, f"Stock insuficiente. Actual: {p['stock']}, descuento: {abs(ajuste.cantidad)}")
 
         conn.execute("UPDATE productos SET stock=? WHERE id=?", (nuevo, id))
+        
+        # RF03: Registrar en Timeline
+        registrar_movimiento(conn, "ajuste", ajuste.motivo or "Ajuste manual", [{
+            "producto_id": id,
+            "variante_id": None,
+            "cantidad": ajuste.cantidad,
+            "stock_antes": p["stock"],
+            "stock_despues": nuevo
+        }], referencia="ajuste_manual")
+
         return {"producto": p["nombre"], "stock_anterior": p["stock"],
                 "ajuste": ajuste.cantidad, "stock_nuevo": nuevo}
 
@@ -222,6 +233,15 @@ def ajustar_stock_variante(id: int, ajuste: AjusteVariante):
             (v["producto_id"],)
         ).fetchone()["t"]
         conn.execute("UPDATE productos SET stock=? WHERE id=?", (total, v["producto_id"]))
+
+        # RF03: Registrar en Timeline
+        registrar_movimiento(conn, "ajuste", ajuste.motivo or "Ajuste manual", [{
+            "producto_id": v["producto_id"],
+            "variante_id": id,
+            "cantidad": ajuste.cantidad,
+            "stock_antes": v["stock"],
+            "stock_despues": nuevo
+        }], referencia="ajuste_manual")
 
         return {"variante_id": id, "stock_anterior": v["stock"],
                 "ajuste": ajuste.cantidad, "stock_nuevo": nuevo}
