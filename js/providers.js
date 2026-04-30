@@ -9,7 +9,11 @@ async function cargarProveedores() {
     todosProveedores = await api('GET', '/api/proveedores');
     renderProveedoresSelects();
     renderProveedoresLista();
-  } catch (e) { console.error('Error proveedores:', e); }
+  } catch (e) { 
+    console.error('Error proveedores:', e); 
+    const cont = $('lista-proveedores-directorio') || $('lista-proveedores-crud');
+    if (cont) cont.innerHTML = `<div class="alert-box danger" style="margin:10px;"><span>Error: ${e.message}</span></div>`;
+  }
 }
 
 function renderProveedoresSelects() {
