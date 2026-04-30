@@ -93,11 +93,12 @@
     </div>
 
     <div class="section-title">Acceso rápido</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px; margin-bottom:20px;">
       <button class="btn btn-success" onclick="navTo('ventas')">💰 Nueva venta</button>
       <button class="btn btn-primary" onclick="openModalCrearProducto()">➕ Producto</button>
-      <button class="btn btn-outline" onclick="navTo('compras')" style="grid-column:1;">🚚 Compras</button>
-      <button class="btn btn-outline" onclick="openModalBackup()" style="grid-column:2;">💾 Respaldo</button>
+      <button class="btn btn-outline" onclick="navTo('compras')">🚚 Compras</button>
+      <button class="btn btn-outline" onclick="openModalBackup()">💾 Respaldo</button>
+      <button class="btn btn-outline" onclick="navTo('compras')" style="grid-column: span 2;">🏢 Directorio de Proveedores</button>
     </div>
     <div class="section-title">Más vendidos (mes)</div>
     <div id="dash-top-productos">
@@ -207,16 +208,15 @@
     </div>
   </div>
 
-  <!-- ═══ COMPRAS ═══ -->
-  <div class="page" id="page-compras">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-      <span class="section-title" style="margin:0;">Compras a proveedor</span>
-      <div style="display:flex; gap:8px;">
-        <button class="btn btn-outline btn-sm" onclick="openModalListaProveedores()">🏢 Proveedores</button>
-        <button class="btn btn-primary btn-sm" onclick="openModalCompra()">➕ Nueva compra</button>
-      </div>
-    </div>
     <div id="lista-compras">
+      <div class="spinner"></div>
+    </div>
+
+    <div class="section-title" style="margin-top:24px; display:flex; justify-content:space-between; align-items:center;">
+      <span>🏢 Directorio de Proveedores</span>
+      <button class="btn btn-primary btn-sm" onclick="openModalCrearProveedor()" style="width:auto; padding:8px 12px;">➕ Nuevo</button>
+    </div>
+    <div id="lista-proveedores-directorio" class="card" style="padding:12px;">
       <div class="spinner"></div>
     </div>
   </div>

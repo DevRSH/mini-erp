@@ -172,6 +172,7 @@ async function confirmarCompra() {
 
 async function cargarCompras() {
   $('lista-compras').innerHTML = '<div class="spinner"></div>';
+  cargarProveedores(); // Cargar directorio de proveedores también
   try {
     const compras = await api('GET', '/api/compras?limite=50');
     if (!compras.length) {

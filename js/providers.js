@@ -21,23 +21,23 @@ function renderProveedoresSelects() {
 }
 
 function renderProveedoresLista() {
-  const cont = $('lista-proveedores-crud');
+  const cont = $('lista-proveedores-directorio') || $('lista-proveedores-crud');
   if (!cont) return;
   
   if (!todosProveedores.length) {
-    cont.innerHTML = '<div class="empty-state">No hay proveedores registrados</div>';
+    cont.innerHTML = '<div class="empty-state" style="padding:20px 0;">No hay proveedores registrados</div>';
     return;
   }
   
   cont.innerHTML = todosProveedores.map(p => `
-    <div class="card" style="margin-bottom:8px; padding:12px; display:flex; justify-content:space-between; align-items:center;">
+    <div style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center;">
       <div>
-        <div style="font-weight:700;">${p.nombre}</div>
+        <div style="font-weight:700; color:var(--primary);">${p.nombre}</div>
         <div style="font-size:12px; color:var(--muted);">${p.contacto || 'Sin contacto'}</div>
       </div>
       <div style="display:flex; gap:8px;">
-        <button class="btn btn-outline btn-sm" onclick="openModalEditarProveedor(${p.id})">✏️</button>
-        <button class="btn btn-outline btn-sm" style="color:var(--danger);" onclick="eliminarProveedor(${p.id})">🗑️</button>
+        <button class="btn btn-outline btn-sm" style="padding:4px 8px;" onclick="openModalEditarProveedor(${p.id})">✏️</button>
+        <button class="btn btn-outline btn-sm" style="padding:4px 8px; color:var(--danger);" onclick="eliminarProveedor(${p.id})">🗑️</button>
       </div>
     </div>
   `).join('');

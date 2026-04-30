@@ -83,7 +83,7 @@ function navTo(pag) {
   $(`page-${pag}`).classList.add('active');
   $(`nav-${pag}`).classList.add('active');
   const loaders = {
-    dashboard: cargarDashboard,
+    dashboard: () => { cargarDashboard(); cargarProveedores(); },
     inventario: cargarInventario,
     ventas: cargarProductosVenta,
     compras: cargarCompras,
