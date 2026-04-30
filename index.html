@@ -119,9 +119,12 @@
       <input type="text" class="form-input" id="search-productos" placeholder="Buscar producto o código..."
         oninput="filtrarProductos()">
     </div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;">
       <span id="productos-count" style="font-size:13px;color:var(--muted);font-weight:600;"></span>
-      <button class="btn btn-primary btn-sm" onclick="openModalCrearProducto()">➕ Agregar</button>
+      <div style="display:flex;gap:6px;">
+        <button class="btn btn-outline btn-sm" onclick="openModalCategorias()">🏷️ Categorías</button>
+        <button class="btn btn-primary btn-sm" onclick="openModalCrearProducto()">➕ Agregar</button>
+      </div>
     </div>
     <div id="lista-productos">
       <div class="spinner"></div>
@@ -232,6 +235,11 @@
   <div class="page" id="page-reportes">
     <div class="period-tabs">
       <button class="period-tab active" onclick="cambiarSeccionReporte('tablero', this)">Tablero</button>
+      <button class="period-tab" onclick="cambiarSeccionReporte('rentabilidad', this)">Rentabilidad</button>
+      <button class="period-tab" onclick="cambiarSeccionReporte('categorias', this)">Por Categoría</button>
+      <button class="period-tab" onclick="cambiarSeccionReporte('inventario', this)">Inventario</button>
+      <button class="period-tab" onclick="cambiarSeccionReporte('compras', this)">Compras</button>
+      <button class="period-tab" onclick="cambiarSeccionReporte('productos', this)">Catálogo</button>
       <button class="period-tab" onclick="cambiarSeccionReporte('detallado', this)">Detallado</button>
     </div>
 
@@ -292,6 +300,285 @@
       <div style="margin-top:20px; display:flex; gap:10px;">
         <button class="btn btn-outline btn-sm" onclick="exportarTableroHTML()" style="flex:1;">📤 Compartir Tablero</button>
       </div>
+    
+    <!-- SECCIÓN: RENTABILIDAD -->
+    <div id="reporte-rentabilidad-content" style="display:none;">
+      <div class="card" id="rentabilidad-resumen">
+        <!-- Resumen P&L se inyecta aquí -->
+      </div>
+      
+      <div class="card" style="padding:16px;">
+        <div class="section-title" style="margin-top:0;">📈 Evolución Semanal</div>
+        <div style="height:200px; width:100%; position:relative;">
+          <canvas id="canvas-rentabilidad" style="width:100%; height:100%;"></canvas>
+        </div>
+      </div>
+
+      <div class="card" style="padding:0; overflow:hidden; margin-top:16px;">
+        <table class="report-table" id="tabla-rentabilidad">
+          <thead>
+            <tr id="rentabilidad-headers">
+              <th onclick="ordenarRentabilidad('nombre')">Producto ↕️</th>
+              <th onclick="ordenarRentabilidad('categoria')">Cat. ↕️</th>
+              <th onclick="ordenarRentabilidad('unidades_vendidas')">Uds ↕️</th>
+              <th onclick="ordenarRentabilidad('ingresos')">Ingresos ↕️</th>
+              <th onclick="ordenarRentabilidad('costo_total')">Costo ↕️</th>
+              <th onclick="ordenarRentabilidad('ganancia')">Ganancia ↕️</th>
+              <th onclick="ordenarRentabilidad('margen_pct')">Margen ↕️</th>
+            </tr>
+          </thead>
+          <tbody id="rentabilidad-body">
+            <!-- Items de rentabilidad se inyectan aquí -->
+          </tbody>
+        </table>
+      </div>
+
+      <div style="margin-top:20px;">
+        <button class="btn btn-outline btn-sm" onclick="exportarRentabilidadHTML()" style="width:100%;">📤 Exportar Informe de Rentabilidad</button>
+      </div>
+    </div>
+    
+    <!-- SECCIÓN: CATEGORÍAS -->
+    <div id="reporte-categorias-content" style="display:none;">
+      <div class="card" style="padding:12px; margin-bottom:16px;">
+        <div class="section-title" style="margin-top:0;">Filtrar Categorías</div>
+        <div id="categorias-checkboxes" style="display:flex; flex-wrap:wrap; gap:10px; max-height:100px; overflow-y:auto; padding:5px;">
+          <!-- Checkboxes se inyectan aquí -->
+        </div>
+      </div>
+
+      <div class="card" style="padding:16px;">
+        <div class="section-title" style="margin-top:0;">🥧 Participación en Ingresos</div>
+        <div style="height:250px; width:100%; position:relative; display:flex; align-items:center; justify-content:center;">
+          <canvas id="canvas-categorias-torta" style="max-width:250px; max-height:250px;"></canvas>
+        </div>
+      </div>
+
+      <div class="card" style="padding:0; overflow:hidden; margin-top:16px;">
+        <table class="report-table" id="tabla-categorias">
+          <thead>
+            <tr>
+              <th>Categoría</th>
+              <th style="text-align:center;">Prods</th>
+              <th style="text-align:center;">Vendido</th>
+              <th style="text-align:right;">Ingresos</th>
+              <th style="text-align:right;">Ganancia</th>
+              <th style="text-align:right;">Margen</th>
+            </tr>
+          </thead>
+          <tbody id="categorias-body">
+            <!-- Items se inyectan aquí -->
+          </tbody>
+        </table>
+      </div>
+
+      <div style="margin-top:20px;">
+        <button class="btn btn-outline btn-sm" onclick="exportarCategoriasHTML()" style="width:100%;">📤 Exportar Rentabilidad por Categoría</button>
+      </div>
+    </div>
+
+    <!-- SECCIÓN: INVENTARIO (REPORTE) -->
+    <div id="reporte-inventario-content" style="display:none;">
+      <div class="card" style="padding:12px; margin-bottom:16px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <label style="font-size:12px; font-weight:700;">Fecha de Corte:</label>
+          <input type="date" class="form-input" id="inv-fecha-corte" style="padding:6px 10px; font-size:13px; flex:1;" onchange="cargarReporteInventario()">
+        </div>
+      </div>
+
+      <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));">
+        <div class="stat-card primary">
+          <div class="stat-value" id="inv-valor-bodega" style="font-size:16px;">—</div>
+          <div class="stat-label">Valor Bodega</div>
+        </div>
+        <div class="stat-card" style="background:#f9f9f9;">
+          <div class="stat-value" id="inv-total-prods">—</div>
+          <div class="stat-label">Total Prods</div>
+        </div>
+        <div class="stat-card danger">
+          <div class="stat-value" id="inv-agotados">—</div>
+          <div class="stat-label">Agotados</div>
+        </div>
+        <div class="stat-card warn">
+          <div class="stat-value" id="inv-bajo-min">—</div>
+          <div class="stat-label">Bajo Mín.</div>
+        </div>
+        <div class="stat-card info">
+          <div class="stat-value" id="inv-sin-mov">—</div>
+          <div class="stat-label">Sin Mov. (30d)</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px; padding:0; overflow:hidden;">
+        <div class="section-title" style="margin:12px; display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="toggleSection('inv-criticos-list')">
+          <span>⚠️ Críticos (Agotados / Bajo Mínimo)</span>
+          <span id="inv-criticos-count" class="badge danger">0</span>
+        </div>
+        <div id="inv-criticos-list" style="display:none; padding:0 12px 12px 12px;">
+          <!-- Lista de críticos -->
+        </div>
+      </div>
+
+      <div class="period-tabs" style="margin-top:16px;">
+        <button class="period-tab active btn-rotacion" onclick="tabRotacion('alta', this)">Alta</button>
+        <button class="period-tab btn-rotacion" onclick="tabRotacion('media', this)">Media</button>
+        <button class="period-tab btn-rotacion" onclick="tabRotacion('baja', this)">Baja</button>
+        <button class="period-tab btn-rotacion" onclick="tabRotacion('sin_movimiento', this)">Inactivo</button>
+      </div>
+      <div class="card" style="padding:0; overflow:hidden; border-top:none;">
+        <div id="inv-rotacion-list" style="max-height:300px; overflow-y:auto;">
+          <!-- Lista rotación -->
+        </div>
+      </div>
+
+      <div class="section-title" style="margin-top:24px;">📋 Listado Completo</div>
+      <div class="search-input-wrap">
+        <span class="search-icon">🔍</span>
+        <input type="text" class="form-input" id="search-inv-completo" placeholder="Filtrar por nombre o categoría..." oninput="filtrarInvCompleto()">
+      </div>
+      <div class="card" style="padding:0; overflow:hidden;">
+        <table class="report-table" style="font-size:12px;">
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th style="text-align:center;">Stock</th>
+              <th style="text-align:right;">Valor</th>
+              <th style="text-align:right;">Últ. Venta</th>
+            </tr>
+          </thead>
+          <tbody id="inv-completo-body">
+            <!-- Listado completo -->
+          </tbody>
+        </table>
+        <div id="inv-completo-footer" style="padding:10px; text-align:center; font-size:11px; color:var(--muted); border-top:1px solid var(--border);">
+          Mostrando primeros 200 resultados
+        </div>
+      </div>
+
+      <div style="margin-top:20px;">
+        <button class="btn btn-outline btn-sm" onclick="exportarInventarioHTML()" style="width:100%;">📤 Exportar Inventario Completo</button>
+      </div>
+    </div>
+
+    <!-- SECCIÓN: COMPRAS (REPORTE) -->
+    <div id="reporte-compras-content" style="display:none;">
+      <div class="stats-grid">
+        <div class="stat-card primary">
+          <div class="stat-value" id="comp-total-invertido">—</div>
+          <div class="stat-label">Total Invertido</div>
+        </div>
+        <div class="stat-card info">
+          <div class="stat-value" id="comp-num-compras">—</div>
+          <div class="stat-label">Compras</div>
+        </div>
+        <div class="stat-card success" style="background:#f0f7ff; color:#1B3A6B;">
+          <div class="stat-value" id="comp-num-prov">—</div>
+          <div class="stat-label">Proveedores</div>
+        </div>
+        <div class="stat-card warn">
+          <div class="stat-value" id="comp-total-envios">—</div>
+          <div class="stat-label">Gasto Envíos</div>
+        </div>
+      </div>
+
+      <div class="section-title">🏭 Análisis por Proveedor</div>
+      <div class="card" style="padding:0; overflow:hidden;">
+        <table class="report-table" id="tabla-compras-prov">
+          <thead>
+            <tr>
+              <th onclick="ordenarComprasProv('nombre')">Proveedor ↕️</th>
+              <th onclick="ordenarComprasProv('num_compras')" style="text-align:center;">N° ↕️</th>
+              <th onclick="ordenarComprasProv('total_invertido')" style="text-align:right;">Total ↕️</th>
+            </tr>
+          </thead>
+          <tbody id="compras-prov-body">
+            <!-- Items se inyectan aquí -->
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section-title" style="margin-top:24px;">🏆 Productos más comprados</div>
+      <div class="card" style="padding:0; overflow:hidden;">
+        <table class="report-table" style="font-size:12px;">
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th style="text-align:center;">Uds</th>
+              <th style="text-align:right;">Costo Prom.</th>
+              <th style="text-align:right;">Var.</th>
+            </tr>
+          </thead>
+          <tbody id="compras-prods-body">
+            <!-- Items se inyectan aquí -->
+          </tbody>
+        </table>
+      </div>
+
+      <div style="margin-top:20px;">
+        <button class="btn btn-outline btn-sm" onclick="exportarComprasHTML()" style="width:100%;">📤 Exportar Informe de Compras</button>
+      </div>
+    </div>
+
+    <!-- SECCIÓN: CATÁLOGO DE PRODUCTOS (REPORTE) -->
+    <div id="reporte-productos-content" style="display:none;">
+      <div class="card" style="padding:12px; margin-bottom:16px;">
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap:10px; align-items:end;">
+          <div>
+            <label style="font-size:11px; font-weight:700;">Categoría</label>
+            <select class="form-input" id="rep-prod-cat" style="font-size:12px; padding:6px;" onchange="cargarReporteProductos()">
+              <option value="">Todas</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:11px; font-weight:700;">Estado</label>
+            <select class="form-input" id="rep-prod-estado" style="font-size:12px; padding:6px;" onchange="cargarReporteProductos()">
+              <option value="activos">Activos</option>
+              <option value="inactivos">Inactivos</option>
+              <option value="todos">Todos</option>
+            </select>
+          </div>
+          <div style="padding-bottom:8px;">
+            <label style="font-size:12px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+              <input type="checkbox" id="rep-prod-bajo" onchange="cargarReporteProductos()"> Stock bajo
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <div class="search-input-wrap" style="margin:0; flex:1; max-width:300px;">
+          <span class="search-icon">🔍</span>
+          <input type="text" class="form-input" id="search-rep-productos" placeholder="Buscar por nombre o código..." oninput="filtrarRepProductos()">
+        </div>
+        <div id="rep-prod-count" style="font-size:11px; color:var(--muted); font-weight:700;">Mostrando 0 de 0</div>
+      </div>
+
+      <div class="card" style="padding:0; overflow:hidden;">
+        <div style="overflow-x:auto;">
+          <table class="report-table" style="font-size:12px; min-width:800px;">
+            <thead>
+              <tr>
+                <th>Producto</th>
+                <th style="text-align:right;">Precio</th>
+                <th style="text-align:right;">Costo R.</th>
+                <th style="text-align:right;">Margen</th>
+                <th style="text-align:center;">Stock</th>
+                <th style="text-align:center;">Estado</th>
+                <th>Cód. Prov.</th>
+                <th>Acción</th>
+              </tr>
+            </thead>
+            <tbody id="rep-productos-body">
+              <!-- Items -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div style="margin-top:20px;">
+        <button class="btn btn-outline btn-sm" onclick="exportarProductosHTML()" style="width:100%;">📤 Exportar Catálogo Completo</button>
+      </div>
+    </div>
     </div>
 
     <!-- SECCIÓN: REPORTES DETALLADOS (Existente) -->
@@ -765,6 +1052,29 @@
 
   <!-- Scripts Modulares -->
   <script src="js/globals.js?v=4.1"></script>
+  <div class="modal-overlay" id="modal-categorias">
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-title">🏷️ Gestionar Categorías</div>
+      <div id="lista-categorias-modal" style="display:flex; flex-direction:column; gap:10px; margin-bottom:20px;">
+        <!-- Lista de categorías se inyecta aquí -->
+      </div>
+      <div class="section-title">Renombrar / Fusionar</div>
+      <div class="card" style="padding:12px;">
+        <div class="form-group">
+          <label class="form-label">Nombre Actual</label>
+          <select class="form-select" id="cat-nombre-actual"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Nuevo Nombre</label>
+          <input type="text" class="form-input" id="cat-nombre-nuevo" placeholder="Ej: Electrónica">
+        </div>
+        <button class="btn btn-primary" onclick="renombrarCategoria()">Actualizar Categoría</button>
+      </div>
+      <button class="btn btn-outline" onclick="cerrarModales()" style="margin-top:12px;">Cerrar</button>
+    </div>
+  </div>
+
   <script src="js/auth.js?v=4.1"></script>
   <script src="js/dashboard.js?v=4.1"></script>
   <script src="js/inventory.js?v=4.1"></script>

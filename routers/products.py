@@ -267,3 +267,20 @@ def buscar_por_codigo(codigo: str):
             return {"tipo": "producto", "datos": _producto_full(p)}
 
         raise HTTPException(404, f"No se encontró ningún producto con código '{codigo}'")
+
+@router.get("/api/categorias")
+def listar_categorias():
+    with get_db() as conn:
+        rows = conn.execute("SELECT DISTINCT categoria FROM productos WHERE activo=1 ORDER BY categoria").fetchall()
+        return [r["categoria"] for r in rows if r["categoria"]]
+
+@router.put("/api/categorias/renombrar")
+def renombrar_categoria(datos: dict):
+    nombre_actual = datos.get("nombre_actual")
+    nombre_nuevo = datos.get("nombre_nuevo")
+    if not nombre_actual or not nombre_nuevo:
+        raise HTTPException(400, "nombre_actual y nombre_nuevo son requeridos")
+    
+    with get_db() as conn:
+        conn.execute("UPDATE productos SET categoria=? WHERE categoria=?", (nombre_nuevo, nombre_actual))
+        return {"mensaje": f"Categoría '{nombre_actual}' renombrada a '{nombre_nuevo}'"}

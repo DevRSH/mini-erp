@@ -1387,3 +1387,20 @@ input:checked+.toggle-slider:before {
   color: var(--muted);
   font-style: italic;
 }
+.report-table th {
+  cursor: pointer;
+  user-select: none;
+  background: var(--bg);
+  padding: 10px 8px;
+  border-bottom: 2px solid var(--border);
+  transition: background 0.2s;
+}
+
+.report-table th:hover {
+  background: var(--border);
+}
+
+.report-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}

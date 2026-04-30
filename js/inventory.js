@@ -254,3 +254,50 @@ async function eliminarProducto() {
     toast(res.mensaje); cerrarModales(); cargarInventario();
   } catch (e) { toast(e.message, 'error'); }
 }
+
+// ═══════════════════════════════════════════
+// GESTIÓN DE CATEGORÍAS
+// ═══════════════════════════════════════════
+async function openModalCategorias() {
+  try {
+    const cats = await api('GET', '/api/categorias');
+    const list = $('lista-categorias-modal');
+    const select = $('cat-nombre-actual');
+    
+    if (!cats.length) {
+      list.innerHTML = '<div class="empty-state">No hay categorías definidas.</div>';
+      select.innerHTML = '<option value="">Sin categorías</option>';
+    } else {
+      list.innerHTML = cats.map(c => `
+        <div class="card" style="padding:10px; display:flex; justify-content:space-between; align-items:center; background:var(--bg);">
+          <span style="font-weight:700;">${escapeHtml(c)}</span>
+          <button class="btn btn-outline btn-sm" onclick="$('cat-nombre-actual').value='${c.replace(/'/g, "\\'")}'; $('cat-nombre-nuevo').focus();">Seleccionar</button>
+        </div>
+      `).join('');
+      
+      select.innerHTML = cats.map(c => `<option value="${c}">${escapeHtml(c)}</option>`).join('');
+    }
+    
+    $('cat-nombre-nuevo').value = '';
+    $('modal-categorias').classList.add('open');
+  } catch (e) { toast('Error cargando categorías: ' + e.message, 'error'); }
+}
+
+async function renombrarCategoria() {
+  const actual = $('cat-nombre-actual').value;
+  const nuevo = $('cat-nombre-nuevo').value.trim();
+  
+  if (!actual || !nuevo) {
+    toast('Selecciona una categoría y escribe el nuevo nombre', 'error');
+    return;
+  }
+  
+  if (!confirm(`¿Renombrar/Fusionar "${actual}" a "${nuevo}"?\nEsto afectará a todos los productos activos.`)) return;
+  
+  try {
+    await api('PUT', '/api/categorias/renombrar', { nombre_actual: actual, nombre_nuevo: nuevo });
+    toast('Categoría actualizada ✅');
+    cerrarModales();
+    cargarInventario();
+  } catch (e) { toast(e.message, 'error'); }
+}
